@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "181757369168",
+    "project_id": "afrishield-ai-flood",
+    "storage_bucket": "afrishield-ai-flood.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:181757369168:android:5b83b175c2eaa74c352a55",
+        "android_client_info": {
+          "package_name": "com.afrishield.afrishield_mobile"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyA3S5b-5RWdjpYFlEhLg1fraeUfElsEmWg"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -189,7 +189,8 @@ class _ReportsScreenState extends State<ReportsScreen> {
     } on LocationException catch (e) {
       if (!mounted) return;
       setState(() => _locatingGps = false);
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(e.localizedMessage(AppLocalizations.of(context)!))));
     }
   }
 
@@ -262,7 +263,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
       setState(() => _submitting = false);
       _showResultDialog(
         title: l10n.couldNotSendReportTitle,
-        message: l10n.couldNotSendReportBody(e.toString()),
+        message: l10n.couldNotSendReportBody(e.localizedMessage(l10n)),
       );
       return;
     }
@@ -277,7 +278,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
           _photoContentType ?? 'image/jpeg',
         );
       } on ApiException catch (e) {
-        photoError = e.toString();
+        photoError = e.localizedMessage(l10n);
       }
     }
 

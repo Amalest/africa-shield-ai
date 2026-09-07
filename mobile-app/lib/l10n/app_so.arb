@@ -200,5 +200,11 @@
   "navReports": "Warbixino",
 
   "unknownTime": "waqti aan la ogayn",
-  "showingSavedData": "Waxaa la muujinayaa xogta la kaydiyay tan iyo {when} — hadda xiriir ma jiro."
+  "showingSavedData": "Waxaa la muujinayaa xogta la kaydiyay tan iyo {when} — hadda xiriir ma jiro.",
+
+  "apiErrorNetwork": "Lama gaadhi karin sarvarka. Hubi xiriirkaaga oo mar kale isku day.",
+  "apiErrorServer": "Sarvarku wuxuu la kulmay dhibaato codsigaas. Fadlan mar kale isku day.",
+  "locationErrorServicesDisabled": "Adeegyada goobta way demisan yihiin. Ka dejinta qalabkaaga u dala adeegga goobta kadibna mar kale isku day.",
+  "locationErrorPermissionDenied": "Ogolaanshaha goobta waa la diiday.",
+  "locationErrorPermissionDeniedForever": "Ogolaanshaha goobta si joogto ah ayaa loo diiday. Uga dala AfriShield dejinta qalabkaaga."
 }

@@ -200,5 +200,11 @@
   "navReports": "Ripoti",
 
   "unknownTime": "muda haujulikani",
-  "showingSavedData": "Inaonyesha data iliyohifadhiwa tangu {when} — hakuna muunganisho kwa sasa."
+  "showingSavedData": "Inaonyesha data iliyohifadhiwa tangu {when} — hakuna muunganisho kwa sasa.",
+
+  "apiErrorNetwork": "Imeshindwa kufikia seva. Angalia muunganisho wako na ujaribu tena.",
+  "apiErrorServer": "Seva imepata tatizo na ombi hilo. Tafadhali jaribu tena.",
+  "locationErrorServicesDisabled": "Huduma za mahali zimezimwa. Washa huduma za mahali kwenye mipangilio ya kifaa chako kisha ujaribu tena.",
+  "locationErrorPermissionDenied": "Ruhusa ya mahali ilikataliwa.",
+  "locationErrorPermissionDeniedForever": "Ruhusa ya mahali imekataliwa kabisa. Iwashe kwa AfriShield kwenye mipangilio ya kifaa chako."
 }

@@ -200,5 +200,11 @@
   "navReports": "البلاغات",
 
   "unknownTime": "وقت غير معروف",
-  "showingSavedData": "يتم عرض البيانات المحفوظة منذ {when} — لا يوجد اتصال حاليًا."
+  "showingSavedData": "يتم عرض البيانات المحفوظة منذ {when} — لا يوجد اتصال حاليًا.",
+
+  "apiErrorNetwork": "تعذر الوصول إلى الخادم. تحقق من اتصالك وحاول مرة أخرى.",
+  "apiErrorServer": "واجه الخادم مشكلة في معالجة هذا الطلب. يرجى المحاولة مرة أخرى.",
+  "locationErrorServicesDisabled": "خدمات الموقع مغلقة. فعّل خدمة الموقع في إعدادات جهازك وحاول مرة أخرى.",
+  "locationErrorPermissionDenied": "تم رفض إذن الموقع.",
+  "locationErrorPermissionDeniedForever": "تم رفض إذن الموقع بشكل دائم. فعّله لتطبيق AfriShield في إعدادات جهازك."
 }

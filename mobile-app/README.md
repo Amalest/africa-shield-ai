@@ -33,7 +33,7 @@ About.
 | Region risk, alert text, map pins | **Real** — `GET /api/regions` |
 | Alert filtering by risk level | **Real** — computed from the same data |
 | SMS alert channel toggle | **Real channel** (backend sends via Africa's Talking); the toggle itself is just a local preference, doesn't yet call a backend "opt in" endpoint |
-| "Mobile App" (push notification) channel | **Real** — Firebase Cloud Messaging. Toggling it on requests a device token and registers it with `POST /api/push-tokens`; toggling off calls `DELETE /api/push-tokens/{token}`. **Won't actually deliver anything yet** — no Firebase project has been created for this app (see `lib/firebase_options.dart`), so `PushService` cleanly reports "unavailable" and the toggle explains that rather than pretending to succeed |
+| "Mobile App" (push notification) channel | **Real** — Firebase Cloud Messaging, against a real project (`afrishield-ai-flood`, configured 2026-08-29 via `flutterfire configure` — see `lib/firebase_options.dart`), with a real Web Push VAPID key set too (`PushService._webVapidKey`). Toggling it on requests a device token and registers it with `POST /api/push-tokens`; toggling off calls `DELETE /api/push-tokens/{token}`. Android/iOS/Web should all be able to obtain a token now (untested on Android/iOS — no device/emulator in this environment). **The backend still needs its own service-account credential** in `backend/.env`'s `FIREBASE_SERVICE_ACCOUNT_JSON` before it can actually send anything — this file/key pair alone only lets the app receive |
 | WhatsApp / USSD channels | **Not built.** Switches are disabled with an inline note explaining why — see `screens/settings/alert_channels_screen.dart` |
 | Voice alerts (text-to-speech "Read Aloud") | **Real** — `flutter_tts`, on-device, no backend involved |
 | Text size / high contrast | **Real** — applied app-wide via `AccessibilityProvider` + `MediaQuery` override in `app.dart` |
@@ -41,10 +41,10 @@ About.
 | Hazard reporting ("Reports" tab) | **Real** — `POST /api/hazard-reports`. Category/description/location/GPS are sent for real and persisted server-side; a failed send shows a real error, not a fake success |
 | Hazard report photo attachment | **Real** — `image_picker` (camera or gallery) + `POST /api/hazard-reports/{id}/photo`. If the report sends but the photo upload fails, the dialog says so honestly rather than claiming full success |
 | "Use my current location" (GPS) | **Real** — `geolocator`, in both onboarding's Location Setup and the Reports tab. No reverse geocoding: onboarding shows the raw coordinates and still requires manual State/LGA/City entry; Reports attaches the raw coordinates to the report |
-| Emergency call button | **Real** — `url_launcher` + real, cited per-country emergency numbers for all 54 countries (`lib/data/emergency_numbers.dart`, sourced from Wikipedia's "List of emergency telephone numbers"). Confirms with the user first, showing the exact number and a caveat that it's cited data, not independently re-verified for their specific area |
+| Emergency call button | **Real** — `url_launcher` + real, cited per-country emergency numbers for all 54 countries (`lib/data/emergency_numbers.dart`, sourced from Wikipedia's "List of emergency telephone numbers"). **The 10 currently monitored countries are cross-verified against a second independent source** (UK gov.uk travel advice) — this caught and corrected 4 wrong numbers (Kenya, Egypt, Uganda, Mozambique). The other 44 are still single-sourced. Confirms with the user first, showing the exact number |
 | Country/State/LGA/City pickers | **Real** for Country/State/City — 54 countries, 1,117 states/regions, 4,638 cities/towns from the open `dr5hn/countries-states-cities-database` (see `lib/data/geo_data.dart`). Picking a State opens a real searchable list of that country's actual regions; picking a City opens that state's actual cities. **LGA is still a plain text field** — no equally reliable third administrative tier exists across all 54 countries in that dataset |
 | Yoruba / Hausa (2 of the 9 languages) | Selectable, tagged "alerts not translated yet" — the backend's `translations.py` only covers 7 of the 9 languages Figma lists. The app's own UI chrome (buttons/labels) also has no translation for these two, and falls back to English |
-| UI chrome translation (buttons, labels, headings) | **Real for the 7 backend-supported languages** — `lib/l10n/*.arb` + generated `AppLocalizations`, switched live from the Settings > Language choice. **AI-drafted, unreviewed by a native speaker** — same caveat as the backend's own French/Portuguese/Amharic alert text (see `backend/README.md`), except here it applies to all 6 non-English languages, since this is a different set of strings than the alert wording and has never been reviewed even for Swahili/Arabic/Somali. Runtime error messages (`ApiException`, `LocationException`) are a separate, deliberately out-of-scope gap — still English-only |
+| UI chrome translation (buttons, labels, headings) | **Real for the 7 backend-supported languages** — `lib/l10n/*.arb` + generated `AppLocalizations`, switched live from the Settings > Language choice. **AI-drafted, unreviewed by a native speaker** — same caveat as the backend's own French/Portuguese/Amharic alert text (see `backend/README.md`), except here it applies to all 6 non-English languages, since this is a different set of strings than the alert wording and has never been reviewed even for Swahili/Arabic/Somali. This now includes runtime error messages (`ApiException`, `LocationException`) too — each carries an error-kind enum instead of a raw English string, so the UI resolves a translated message via `localizedMessage(l10n)` instead of showing `toString()`'s technical (always-English) detail |
 
 ## Structure
 
@@ -58,7 +58,7 @@ lib/
   models/region.dart, alert.dart, hazard_report.dart
   services/api_service.dart, cache_service.dart, location_service.dart,
            push_service.dart
-  firebase_options.dart                  — Firebase config (placeholder — see its doc comment)
+  firebase_options.dart                  — real Firebase config (afrishield-ai-flood) — see its doc comment
   l10n/app_en.arb, app_sw.arb, app_ar.arb, app_so.arb, app_fr.arb,
        app_pt.arb, app_am.arb  — UI chrome translations (see l10n.yaml)
   providers/
@@ -94,11 +94,15 @@ a real error state, not fake data.
 
 ## Known gaps worth tackling next
 
-- **No real Firebase project exists yet** — `lib/firebase_options.dart` is
-  all placeholder values (see its doc comment for the exact setup steps:
-  create a project, run `flutterfire configure`, add a service-account
-  key to `backend/.env`). Until then, the "Mobile App" channel's toggle
-  honestly reports push as unavailable rather than pretending to work.
+- **Firebase project is real now** (`afrishield-ai-flood`, configured
+  2026-08-29 via `flutterfire configure`, plus a real Web Push VAPID key —
+  see `lib/firebase_options.dart` and `PushService`'s doc comments). One
+  setup step remains: a service-account key in `backend/.env`'s
+  `FIREBASE_SERVICE_ACCOUNT_JSON` (Project Settings > Service Accounts >
+  Firebase Admin SDK > Generate new private key) so the backend can
+  actually send anything — until then, tokens register successfully but
+  nothing gets pushed. Android/iOS token registration is also still
+  untested (no device/emulator here).
 - No third administrative tier (LGA) with reliable coverage across all 54
   countries — stays free text. GPS also still gives raw coordinates, not
   an address, so it doesn't help fill this in either.
@@ -107,6 +111,6 @@ a real error state, not fake data.
   Swahili/Arabic/Somali even though those languages' *alert* wording was
   already reviewed (that review never covered this separate set of
   strings).
-- Localize `ApiException`/`LocationException` runtime error messages —
-  currently English-only regardless of the selected language, since
-  they're thrown from service classes with no `BuildContext`.
+- The 44 countries outside the 10 currently monitored regions still
+  have single-sourced (Wikipedia only) emergency numbers, not
+  cross-verified against a second source.

@@ -2,18 +2,35 @@ import 'dart:convert';
 
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:http/http.dart' as http;
 
 import '../config/env.dart';
 import '../firebase_options.dart';
 
-/// Real push-notification registration (Firebase Cloud Messaging) for the
-/// "Mobile App" alert channel — see `AlertChannelsScreen`. Degrades
-/// honestly, not silently: until a real Firebase project's config is in
-/// `lib/firebase_options.dart` (see that file's doc comment), obtaining a
-/// device token fails, `enable()` returns `false`, and the caller shows
-/// "not available yet" instead of a fake "on" state.
+/// A real Firebase project is configured now (`lib/firebase_options.dart`,
+/// set up 2026-08-29 via `flutterfire configure` — see that file's doc
+/// comment), and a real Web Push VAPID key is set below too (generated the
+/// same day from Project Settings > Cloud Messaging > Web configuration >
+/// Web Push certificates). Android and iOS push should work as-is once
+/// built for those platforms (untested here, no device/emulator available
+/// in this environment); web should now be able to obtain a token in the
+/// browser too. What's still missing is on the *backend* side: it needs
+/// its own service-account credential (`backend/.env`'s
+/// `FIREBASE_SERVICE_ACCOUNT_JSON`) before it can actually send anything —
+/// this file alone only lets the app receive. Every failure mode this
+/// class hits (permission denied, no registered app for a platform, etc.)
+/// still degrades the same honest way: `enable()` returns `false`, never a
+/// fake success.
 class PushService {
+  /// Generated 2026-08-29 from Firebase Console > Project Settings >
+  /// Cloud Messaging > Web configuration > Web Push certificates. Only
+  /// used on web (`FirebaseMessaging.getToken` ignores it on
+  /// Android/iOS) — not a secret, this key is meant to be public/client-
+  /// side, same as everything in `firebase_options.dart`.
+  static const String _webVapidKey =
+      'BJJpOpJLVCDgHK7w21Zlq7rOnzu28nFhOi1C7nY7YSGWCpMT1J-pXWGPKe4B7K9VI8dUGOl3yu9A9YDV9KKnlu0';
+
   bool _initTried = false;
   bool _initialized = false;
   String? _token;
@@ -29,16 +46,17 @@ class PushService {
       if (settings.authorizationStatus == AuthorizationStatus.denied) {
         return false;
       }
-      final token = await FirebaseMessaging.instance.getToken();
+      final token = await FirebaseMessaging.instance.getToken(
+        vapidKey: kIsWeb ? _webVapidKey : null,
+      );
       if (token == null) return false;
       _token = token;
       _initialized = true;
       return true;
     } catch (_) {
-      // Covers every real failure mode of a not-yet-configured Firebase
-      // project: placeholder API keys, no registered app for this
-      // platform, permission denied, no VAPID key on web, etc. — all of
-      // it collapses to "push isn't available right now," which is the
+      // Covers every real failure mode (permission denied, no registered
+      // app for this platform, network error, etc.) — all of it
+      // collapses to "push isn't available right now," which is the
       // honest, safe default rather than guessing which one occurred.
       return false;
     }

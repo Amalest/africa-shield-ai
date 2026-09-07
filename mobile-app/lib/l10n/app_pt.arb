@@ -200,5 +200,11 @@
   "navReports": "Relatos",
 
   "unknownTime": "hora desconhecida",
-  "showingSavedData": "Mostrando dados salvos desde {when} — sem conexão no momento."
+  "showingSavedData": "Mostrando dados salvos desde {when} — sem conexão no momento.",
+
+  "apiErrorNetwork": "Não foi possível acessar o servidor. Verifique sua conexão e tente novamente.",
+  "apiErrorServer": "O servidor teve um problema com essa solicitação. Tente novamente.",
+  "locationErrorServicesDisabled": "Os serviços de localização estão desativados. Ative a localização nas configurações do dispositivo e tente novamente.",
+  "locationErrorPermissionDenied": "A permissão de localização foi negada.",
+  "locationErrorPermissionDeniedForever": "A permissão de localização foi negada permanentemente. Ative-a para o AfriShield nas configurações do dispositivo."
 }

@@ -1,5 +1,20 @@
 # API Contract — Africa Shield AI Backend
 
+**Status (as of 2026-09-07): the AfriShield Admin Command Center API is
+real.** Admin signup/login (JWT bearer tokens), incident management
+(status workflow, evidence verification), AI-explainable priority/triage
+scoring, assistance-request assignment, multi-channel response sending
+(sms/voice/radio/community_leader), response history, dashboard stats,
+and an incident map — all built on top of the existing hazard-report
+records. See the new "Admin Command Center API" section below. Fully
+additive: `GET`/`POST /api/hazard-reports` and the photo endpoints are
+**unchanged in their existing behavior** — every new field
+(`status`, `verified`, `assigned_to`, `responses`, ...) is additive to
+what a hazard report record carries, not a change to what those four
+endpoints already returned. One new sibling endpoint,
+`GET /api/hazard-reports/{report_id}` (a single report, unauthenticated
+like its siblings), was added alongside them.
+
 **Status (as of 2026-08-28): push notifications are real, additive to
 every alert send.** Two new endpoints, `POST /api/push-tokens` and
 `DELETE /api/push-tokens/{token}`, let a device register for/unregister
@@ -599,7 +614,51 @@ below.
 Every report submitted so far, oldest first (same convention as
 `GET /api/alerts`). Returns `[]`, not a 404, before anyone's reported
 anything. Each entry is the same shape as `POST /api/hazard-reports`'s
-response, above (including `has_photo`).
+response, above, **plus** the incident-management fields the Admin
+Command Center API (below) reads and writes: `status`, `status_history`,
+`verified`, `verified_by`, `verified_at`, `verification_notes`,
+`assigned_to`, `assigned_by`, `responses`. See a full example under
+`GET /api/hazard-reports/{report_id}` below.
+
+---
+
+## `GET /api/hazard-reports/{report_id}`
+
+A single report by id, full detail. Unauthenticated, same as the list —
+no admin token required. `404` if `report_id` doesn't exist.
+
+### Response
+
+```json
+{
+  "id": "693c9204318243e284dffcb114668d7a",
+  "category": "Trapped - Flooded Home",
+  "description": "Water rising fast, family stuck on roof",
+  "location_name": "Lagos, Nigeria",
+  "needs_assistance": true,
+  "latitude": 6.5244,
+  "longitude": 3.3792,
+  "submitted_at": "2026-09-07T07:08:47Z",
+  "has_photo": false,
+  "status": "assigned",
+  "status_history": [
+    { "status": "new", "changed_at": "2026-09-07T07:08:47Z", "changed_by": null },
+    { "status": "verifying", "changed_at": "2026-09-07T07:09:00Z", "changed_by": "habiba@afrishield-command.com" },
+    { "status": "assigned", "changed_at": "2026-09-07T07:09:01Z", "changed_by": "habiba@afrishield-command.com", "notes": "Assigned to Lagos Rescue Team 2 (Water Rescue) — closest unit" }
+  ],
+  "verified": true,
+  "verified_by": "habiba@afrishield-command.com",
+  "verified_at": "2026-09-07T07:09:00Z",
+  "verification_notes": "Photo matches location, credible",
+  "assigned_to": "Lagos Rescue Team 2",
+  "assigned_by": "habiba@afrishield-command.com",
+  "responses": []
+}
+```
+
+`status_history[].changed_by` is `null` for the initial `"new"` entry
+(nobody "changed" it — it's the report's starting state) and an admin's
+email for every subsequent change.
 
 ---
 
@@ -641,3 +700,348 @@ or has no photo. Response is the raw image file (`image/jpeg`,
 
 Array of objects, same shape as `POST /api/hazard-reports`'s response,
 above.
+
+---
+
+# Admin Command Center API
+
+Everything the AfriShield Admin Command Center (`frontend-web/`) needs
+beyond the citizen-facing hazard-report endpoints above: authentication,
+incident management, AI-explainable triage, assistance dispatch, response
+history, dashboard stats, and the incident map. All built on the same
+`hazard_reports.json` records — an "incident" here always means a hazard
+report.
+
+**Authentication:** every route below except signup/login requires
+`Authorization: Bearer <token>` on the request, where `<token>` is what
+`POST /api/admin/signup` or `POST /api/admin/login` returned. Missing,
+malformed, expired (24h lifetime), or otherwise invalid tokens get a
+`401` with a `detail` message. There is no refresh-token flow — once a
+token expires, log in again.
+
+**Current status:** real, not a stub. Passwords are bcrypt-hashed before
+ever touching disk; tokens are signed JWTs (HS256); admins persist to
+`backend/app/data/admins.json` (gitignored, like `hazard_reports.json` —
+holds password hashes, never committed). One real gap, flagged
+explicitly: `ADMIN_JWT_SECRET` defaults to a fixed, publicly-known demo
+value if unset in `.env`, so tokens are forgeable by anyone who reads this
+repo's source until a real deployment sets its own secret — fine for the
+hackathon demo, not for production. See `backend/.env.example`.
+
+---
+
+## `POST /api/admin/signup`
+
+Creates a new admin account and logs them in immediately (no separate
+login call needed right after signing up).
+
+### Request
+
+```json
+{
+  "name": "Habiba",
+  "email": "habiba@afrishield-command.com",
+  "password": "supersecret1"
+}
+```
+
+`password` must be at least 8 characters (`422` otherwise). `email` must
+be a syntactically valid address (validated server-side); it's the unique
+key for an admin account — signing up again with the same email is a
+`409`.
+
+### Response
+
+```json
+{
+  "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "admin": {
+    "id": "a83f691ee83743f2a69a60b2b788f23b",
+    "name": "Habiba",
+    "email": "habiba@afrishield-command.com",
+    "created_at": "2026-09-07T07:08:36Z"
+  }
+}
+```
+
+`201 Created`. `password`/`password_hash` never appear in any response.
+
+---
+
+## `POST /api/admin/login`
+
+### Request
+
+```json
+{ "email": "habiba@afrishield-command.com", "password": "supersecret1" }
+```
+
+### Response
+
+Same shape as signup's response, `200 OK`. `401` on a wrong email or
+password — deliberately the same error either way, so this endpoint can't
+be used to probe which emails are registered.
+
+---
+
+## `GET /api/admin/me`
+
+Returns the profile of whoever the bearer token belongs to — for
+verifying a stored token is still valid and showing "logged in as X"
+without re-sending credentials.
+
+### Response
+
+```json
+{
+  "id": "a83f691ee83743f2a69a60b2b788f23b",
+  "name": "Habiba",
+  "email": "habiba@afrishield-command.com",
+  "created_at": "2026-09-07T07:08:36Z"
+}
+```
+
+---
+
+## `GET /api/admin/dashboard/stats`
+
+Aggregate counts for the dashboard's summary tiles, computed live on
+every call (no caching).
+
+### Response
+
+```json
+{
+  "total_reports": 2,
+  "critical_or_high_priority": 1,
+  "assistance_needed": 1,
+  "resolved": 1,
+  "by_status": { "resolved": 1, "new": 1 }
+}
+```
+
+`critical_or_high_priority` counts reports whose `priority_level` (see
+the triage section below) is `"critical"` or `"high"` — computed the same
+way `GET /api/admin/incidents/prioritized` scores them, so the two stay
+consistent.
+
+---
+
+## `GET /api/admin/incidents/prioritized`
+
+Every hazard report — AI triage: ranked by `priority_score`, highest
+first, each with an explainable factor breakdown. See
+`backend/app/models/priority_model.py` for the full weighting.
+
+**Query params:** `include_resolved` (bool, default `false`) — resolved
+reports are excluded by default since they no longer need triage
+attention.
+
+### Response
+
+```json
+[
+  {
+    "id": "693c9204318243e284dffcb114668d7a",
+    "category": "Trapped - Flooded Home",
+    "location_name": "Lagos, Nigeria",
+    "needs_assistance": true,
+    "status": "new",
+    "...": "...all the fields from GET /api/hazard-reports/{id}...",
+    "priority_score": 0.85,
+    "priority_level": "critical",
+    "severity": "high",
+    "factors": {
+      "needs_assistance": "Reporter explicitly requested help (+0.40)",
+      "region_risk_level": "Region flood risk: high (+0.30)",
+      "category": "Category 'Trapped - Flooded Home' (+0.15)",
+      "evidence": "No photo attached (+0.00)",
+      "report_age": "0.0h since submission (+0.00)"
+    }
+  }
+]
+```
+
+`priority_score` is 0.0–1.0, a weighted sum of five factors (weights sum
+to 1.0): `needs_assistance` (0.40), `region_risk_level` (0.30, the
+report's region's current flood risk from `regions.json`/
+`risk_model.py`), `category` (0.15, keyword-matched urgency of the
+freeform category text), `evidence` (0.05, a photo is attached), and
+`report_age` (0.10, hours since submission, capped at 24h). `priority_level`
+buckets the score: `critical` ≥0.70, `high` ≥0.45, `medium` ≥0.20,
+else `low`. `severity` is the region's flood risk level (or `"unknown"`
+if `location_name` doesn't match a monitored region) — a different
+question from `priority_score` ("how dangerous is the situation" vs. "how
+urgently should this specific report be handled"), included because the
+incident map (below) needs both.
+
+---
+
+## `GET /api/admin/incidents/map`
+
+Map-ready incident pins — only reports with a real GPS fix (both
+`latitude` and `longitude` set); reports with neither are skipped, not
+plotted with a guessed location.
+
+### Response
+
+```json
+[
+  {
+    "id": "693c9204318243e284dffcb114668d7a",
+    "location_name": "Lagos, Nigeria",
+    "latitude": 6.5244,
+    "longitude": 3.3792,
+    "severity": "high",
+    "priority_score": 0.85,
+    "priority_level": "critical",
+    "status": "resolved",
+    "needs_assistance": true,
+    "category": "Trapped - Flooded Home"
+  }
+]
+```
+
+---
+
+## `PATCH /api/admin/incidents/{report_id}/status`
+
+Moves a report through the workflow: `new` → `verifying` → `prioritized`
+→ `assigned` → `responding` → `resolved`.
+
+### Request
+
+```json
+{ "status": "resolved" }
+```
+
+`status` must be one of the six values above (`422` otherwise). Any
+value is accepted regardless of the current status, including moving
+backward (e.g. `assigned` → `verifying` if evidence needs a second look)
+— this endpoint records what happened, it doesn't enforce a strict state
+machine. `404` if `report_id` doesn't exist.
+
+### Response
+
+The full updated report (same shape as `GET /api/hazard-reports/{id}`),
+`200 OK`, with a new entry appended to `status_history` recording the new
+status, `changed_at`, and `changed_by` (the calling admin's email).
+
+---
+
+## `POST /api/admin/incidents/{report_id}/verify`
+
+Flags a report's evidence as verified or rejected — a human judgment
+call, not something inferred automatically.
+
+### Request
+
+```json
+{ "verified": true, "notes": "Photo matches location, credible" }
+```
+
+`notes` is optional.
+
+### Response
+
+The full updated report, `200 OK`, with `verified`/`verified_by`/
+`verified_at`/`verification_notes` set. If the report was still at its
+default `"new"` status, this also advances it to `"verifying"` (recorded
+in `status_history`) — reviewing evidence *is* the verifying step.
+Calling this again (e.g. to correct an earlier call) always updates the
+verification fields but only nudges `status` forward the first time.
+
+---
+
+## `GET /api/admin/assistance-requests`
+
+Reports with `needs_assistance: true`, enriched with the same priority
+breakdown as `GET /api/admin/incidents/prioritized`, ranked
+highest-priority first — "who needs help right now, in what order."
+
+### Response
+
+Same shape as `GET /api/admin/incidents/prioritized`, filtered to
+`needs_assistance: true` only.
+
+---
+
+## `POST /api/admin/assistance-requests/{report_id}/assign`
+
+Assigns a responder/team to a report (works for any report id, not only
+ones with `needs_assistance: true`).
+
+### Request
+
+```json
+{
+  "assigned_to": "Lagos Rescue Team 2",
+  "team": "Water Rescue",
+  "notes": "closest unit"
+}
+```
+
+`team` and `notes` are optional.
+
+### Response
+
+The full updated report, `200 OK`. Sets `assigned_to`/`assigned_by`,
+sets `status` to `"assigned"`, and appends a `status_history` entry — one
+call does both, rather than assign-then-separately-update-status.
+
+---
+
+## `POST /api/admin/incidents/{report_id}/response`
+
+Sends a response about this incident and logs it to the report's response
+history.
+
+### Request
+
+```json
+{
+  "channel": "sms",
+  "message": "Help is on the way, stay where you are",
+  "recipients": ["+2348012345678"]
+}
+```
+
+`channel` is one of `sms`, `voice`, `radio`, `community_leader`.
+`recipients` is optional (empty/omitted is valid — see below).
+
+### Response
+
+```json
+{
+  "id": "a2a6db2f6adb401c9c395c9314522cc8",
+  "channel": "sms",
+  "message": "Help is on the way, stay where you are",
+  "recipients": ["+2348012345678"],
+  "status": "simulated",
+  "sent_at": "2026-09-07T07:09:01Z",
+  "sent_by": "habiba@afrishield-command.com"
+}
+```
+
+`201 Created`. `sms`/`voice` reuse the exact same Africa's Talking
+gateways `POST /api/alerts/send` uses — a real send (`"status": "sent"`)
+if `recipients` are given and Africa's Talking is configured, a clearly
+labeled `"simulated"` send otherwise (no recipients, or no credentials
+configured). **`radio` and `community_leader` have no real dispatch
+integration at all** — no radio-station API or community-leader contact
+system has ever been built for this project — so a response on either
+channel is **always** `"simulated"`, logged honestly rather than
+pretending a real broadcast or call happened. Also advances the report's
+`status` to `"responding"` if it's still earlier in the workflow (never
+moves a `"resolved"` report backward).
+
+---
+
+## `GET /api/admin/incidents/{report_id}/responses`
+
+Full response history for one report, oldest first — everything ever
+sent via `POST .../response`.
+
+### Response
+
+Array of objects, same shape as `POST .../response`'s response, above.

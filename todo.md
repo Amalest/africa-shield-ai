@@ -81,6 +81,18 @@ Presentation & Pitch 5.
 
 - [ ] Everything above under "Critical" — a demo that only shows
       "(simulated)" labels undercuts this criterion directly.
+- [x] **Admin Command Center backend API built (2026-09-07), at Habiba's
+      request.** Admin signup/login/me (bcrypt + JWT), incident
+      management (status workflow + evidence verification, additive
+      fields on `hazard_reports.json`), AI-explainable priority/triage
+      scoring, assistance assignment, multi-channel response dispatch
+      (sms/voice real via Africa's Talking, radio/community_leader always
+      simulated — no such integration exists), response history,
+      dashboard stats, and an incident map. Verified end-to-end via curl.
+      See `docs/api-contract.md`'s "Admin Command Center API" section and
+      `docs/progress-log.md`'s 2026-09-07 entry. **Not done yet: the
+      frontend dashboard isn't wired to any of it** — that's the next
+      step, on Habiba's side.
 - [ ] Frontend cleanup (left to the frontend team, doesn't block the demo
       but worth doing before judging):
   - [ ] Move the hardcoded `http://localhost:8000` API URL (duplicated in
@@ -261,26 +273,41 @@ Presentation & Pitch 5.
       cities from the open `dr5hn/countries-states-cities-database`, see
       `mobile-app/lib/data/geo_data.dart`) across all 54 countries, real
       Firebase Cloud Messaging push wiring (Settings > Alert Channels >
-      "Mobile App"), and a real "Call Emergency Line" button (cited
+      "Mobile App"), a real "Call Emergency Line" button (cited
       per-country numbers for all 54 countries, see
       `mobile-app/lib/data/emergency_numbers.dart` — sourced from
-      Wikipedia's emergency-numbers table, not independently re-verified
-      per country, flagged as such in the UI). `flutter analyze` and
-      `flutter test` both pass. Still needed: native-speaker review of
+      Wikipedia's emergency-numbers table; **the 10 currently monitored
+      countries are cross-verified against gov.uk's travel advice too
+      (2026-08-29), which caught 4 wrong numbers: Kenya, Egypt, Uganda,
+      Mozambique** — the other 44 remain single-sourced), and localized
+      `ApiException`/`LocationException` runtime error messages
+      (2026-08-29 — each now carries an error-kind enum instead of a raw
+      English string, resolved to a translated message at the UI layer).
+      `flutter analyze` and `flutter test` both pass. Still needed:
+      native-speaker review of
       the 6 non-English UI translations (see the translation-review
       section below). LGA stays free text — no equally reliable third
       administrative tier exists across all 54 countries in the dataset
       used.
-- [ ] **Create a real Firebase project and drop its config into
-      `mobile-app/lib/firebase_options.dart` (via `flutterfire configure`)
-      and a service-account key into `backend/.env`'s
-      `FIREBASE_SERVICE_ACCOUNT_JSON` (2026-08-28).** Same category of
-      gap as the Africa's Talking account under "Critical" above — the
-      push notification code is built and tested end-to-end with
-      simulated/unavailable states, but nobody has done this external
-      console step yet, so no real push notification has ever actually
-      been delivered to a real device. Free at
-      https://console.firebase.google.com/.
+- [x] ~~Create a real Firebase project and drop its config into
+      `mobile-app/lib/firebase_options.dart` via `flutterfire configure`,
+      plus a Web Push VAPID key and a backend service-account key~~
+      **Done 2026-08-29** — real project `afrishield-ai-flood`: real
+      client config for Android/iOS/Web (`flutterfire configure`,
+      `google-services.json`, the Gradle plugin), a real Web Push VAPID
+      key in `PushService._webVapidKey`, and a real service-account key
+      (Firebase Admin SDK) at `backend/.env`'s
+      `FIREBASE_SERVICE_ACCOUNT_JSON` — confirmed
+      `push_gateway.is_configured()` returns `True` and the backend still
+      imports/starts cleanly. See `docs/progress-log.md`'s 2026-08-29
+      "Real Firebase project created" entry for the full
+      account/permissions saga. **Still not done:**
+      - [ ] Android/iOS token registration is wired up but untested on a
+            real device/emulator (none available in this environment).
+      - [ ] An actual push notification has never been triggered
+            end-to-end and observed arriving on a device/browser — only
+            the plumbing (`is_configured()`, imports, `flutter analyze`)
+            has been verified, not a real delivered notification.
 - [ ] Real translation API instead of the hardcoded dictionary; expand
       language coverage.
 - [ ] **Community-reporting feature — backend + mobile app fully wired,

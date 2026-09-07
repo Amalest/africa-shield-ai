@@ -3,8 +3,10 @@
 FastAPI service for the "Last-Mile Alert AI" flood demo: real rules-based
 flood risk scoring, a genuine trained ML model as a second opinion,
 multi-language alert generation, real SMS/USSD/voice alerts via Africa's
-Talking, and live IoT sensor ingestion (currently a Wokwi ESP32
-simulation — see `../hardware/wokwi-flood-sensor/`).
+Talking, live IoT sensor ingestion (currently a Wokwi ESP32 simulation —
+see `../hardware/wokwi-flood-sensor/`), citizen hazard reporting, and an
+authenticated Admin Command Center API (incident management, AI triage,
+assistance dispatch) for the web dashboard.
 
 ## Setup
 
@@ -87,6 +89,20 @@ shapes. Summary:
   into `"high"` (not on every reading while it stays high) — see
   "Automatic alerts" below. See `app/routes/sensors.py` and
   `../hardware/wokwi-flood-sensor/`.
+- `POST /api/admin/signup` / `POST /api/admin/login` / `GET /api/admin/me`
+  — real. Admin Command Center authentication: bcrypt-hashed passwords,
+  signed JWT bearer tokens (24h lifetime). See "Admin Command Center API"
+  below.
+- `GET /api/admin/dashboard/stats`, `GET /api/admin/incidents/prioritized`,
+  `GET /api/admin/incidents/map`, `PATCH /api/admin/incidents/{id}/status`,
+  `POST /api/admin/incidents/{id}/verify`,
+  `GET /api/admin/assistance-requests`,
+  `POST /api/admin/assistance-requests/{id}/assign`,
+  `POST /api/admin/incidents/{id}/response`,
+  `GET /api/admin/incidents/{id}/responses` — real, all require an admin
+  bearer token. Incident management, AI-explainable triage, and
+  multi-channel response dispatch on top of `hazard_reports.json`. See
+  "Admin Command Center API" below.
 
 ## Automatic alerts
 
@@ -193,6 +209,51 @@ shapes. Summary:
   README for how to run it against this backend (needs a tunnel — Wokwi
   can't reach `localhost`, same constraint as the USSD/voice sandbox
   testing above).
+
+## Admin Command Center API
+
+Everything the admin web dashboard (`../frontend-web/`) needs beyond the
+citizen-facing hazard-report endpoints: auth, incident management,
+triage, assistance dispatch, and stats. Full request/response examples in
+[`../docs/api-contract.md`](../docs/api-contract.md)'s "Admin Command
+Center API" section.
+
+- **Auth** — `app/auth.py`: bcrypt password hashing, PyJWT (HS256, 24h
+  tokens), `app/data/admins.json` (gitignored — holds password hashes,
+  never seed data). `get_current_admin` is a FastAPI dependency every
+  admin-only route uses via `Depends(...)` — one place to change the auth
+  rule if it ever needs to. `ADMIN_JWT_SECRET` (`app/config.py`) has a
+  fixed demo fallback if unset in `.env` — real deployments must set
+  their own, or tokens are forgeable (`app/auth.py` warns at import time
+  if the default is still active).
+- **Incident management** (`app/routes/admin_reports.py`) — every hazard
+  report gains `status` (`new`/`verifying`/`prioritized`/`assigned`/
+  `responding`/`resolved`, with a full `status_history` audit trail),
+  `verified`/`verified_by`/`verified_at`/`verification_notes` (evidence
+  review), and `assigned_to`/`assigned_by`. These fields are additive to
+  `hazard_reports.json` — `GET`/`POST /api/hazard-reports` and the photo
+  endpoints keep their exact existing behavior; only the admin routes
+  read/write the new fields.
+- **AI priority/triage** (`app/models/priority_model.py`) — same
+  design philosophy as `risk_model.py`: a simple, explainable weighted
+  sum (not an opaque model) so an admin can see exactly why one report
+  outranks another. Five factors: `needs_assistance` (0.40),
+  `region_risk_level` (0.30, via `risk_model.py`), `category` (0.15,
+  keyword-matched urgency), `evidence` (0.05, has a photo), `report_age`
+  (0.10, capped at 24h). `GET /api/admin/incidents/prioritized` and
+  `GET /api/admin/assistance-requests` both rank by this score.
+- **Response dispatch** — `POST /api/admin/incidents/{id}/response`
+  reuses `sms_gateway.py`/`voice_gateway.py` exactly as
+  `POST /api/alerts/send` does for `sms`/`voice` channels (real send if
+  configured + recipients given, simulated otherwise). **`radio` and
+  `community_leader` have no real integration at all** — there's no radio
+  station API or community-leader contact system in this project — so
+  those two channels are always logged as `"simulated"`, honestly, rather
+  than faking a real broadcast.
+- **Incident map** (`GET /api/admin/incidents/map`) — reuses the same
+  `latitude`/`longitude` fields hazard reports already carry (from the
+  mobile app's real GPS fix); skips reports with no fix rather than
+  guessing a location.
 
 ## Translations
 

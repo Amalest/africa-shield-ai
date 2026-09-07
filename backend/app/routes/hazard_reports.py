@@ -41,14 +41,20 @@ class HazardReportResponse(BaseModel):
     has_photo: bool = False
 
 
-def _read_reports() -> list[dict]:
+def read_hazard_reports() -> list[dict]:
     if not HAZARD_REPORTS_FILE.exists():
         return []
     return json.loads(HAZARD_REPORTS_FILE.read_text(encoding="utf-8"))
 
 
-def _write_reports(reports: list[dict]) -> None:
+def write_hazard_reports(reports: list[dict]) -> None:
     HAZARD_REPORTS_FILE.write_text(json.dumps(reports, indent=2), encoding="utf-8")
+
+
+# Back-compat aliases for the rest of this file, written before this
+# module's read/write helpers were made public for app/routes/admin_reports.py.
+_read_reports = read_hazard_reports
+_write_reports = write_hazard_reports
 
 
 def _append_report(entry: dict) -> None:
@@ -61,8 +67,26 @@ def _append_report(entry: dict) -> None:
 def get_hazard_reports() -> list[dict]:
     """Citizen-submitted hazard/help reports, oldest first — same
     append-and-return-as-stored convention as `GET /api/alerts`. Empty
-    list (not a 404) when nobody has reported anything yet."""
+    list (not a 404) when nobody has reported anything yet.
+
+    Each entry also carries the admin Command Center's incident-management
+    fields (`status`, `status_history`, `verified`, `assigned_to`,
+    `responses`, ...) — see `app/routes/admin_reports.py` for the
+    endpoints that read/update them. Additive only; nothing here changes
+    the original fields this endpoint has always returned."""
     return _read_reports()
+
+
+@router.get("/api/hazard-reports/{report_id}")
+def get_hazard_report(report_id: str) -> dict:
+    """A single hazard report by id, full detail (including the
+    incident-management fields `GET /api/hazard-reports` also returns).
+    Unauthenticated, same as the list — no admin token required. 404 if
+    `report_id` doesn't exist."""
+    report = next((r for r in read_hazard_reports() if r["id"] == report_id), None)
+    if report is None:
+        raise HTTPException(status_code=404, detail=f"Unknown hazard report id: {report_id}")
+    return report
 
 
 @router.post("/api/hazard-reports", response_model=HazardReportResponse, status_code=201)
@@ -93,7 +117,16 @@ def create_hazard_report(payload: HazardReportRequest) -> HazardReportResponse:
 
     A photo can be attached afterward via
     `POST /api/hazard-reports/{id}/photo` — this endpoint never accepts
-    one directly, since it's plain JSON, not multipart."""
+    one directly, since it's plain JSON, not multipart.
+
+    Every report also starts with the admin Command Center's
+    incident-management fields at their defaults — `status: "new"`,
+    `verified: null`, `assigned_to: null`, `responses: []`. `citizen`
+    callers (this endpoint's own response, per `HazardReportResponse`)
+    never see these — they're additive fields for
+    `app/routes/admin_reports.py`, not part of this endpoint's original
+    contract."""
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     entry = {
         "id": uuid.uuid4().hex,
         "category": payload.category,
@@ -102,8 +135,18 @@ def create_hazard_report(payload: HazardReportRequest) -> HazardReportResponse:
         "needs_assistance": payload.needs_assistance,
         "latitude": payload.latitude,
         "longitude": payload.longitude,
-        "submitted_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "submitted_at": now,
         "has_photo": False,
+        # Incident-management fields — see app/routes/admin_reports.py.
+        "status": "new",
+        "status_history": [{"status": "new", "changed_at": now, "changed_by": None}],
+        "verified": None,
+        "verified_by": None,
+        "verified_at": None,
+        "verification_notes": None,
+        "assigned_to": None,
+        "assigned_by": None,
+        "responses": [],
     }
     _append_report(entry)
     return HazardReportResponse(**entry)

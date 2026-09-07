@@ -200,5 +200,11 @@
   "navReports": "Signalements",
 
   "unknownTime": "heure inconnue",
-  "showingSavedData": "Affichage des données enregistrées depuis {when} — aucune connexion pour le moment."
+  "showingSavedData": "Affichage des données enregistrées depuis {when} — aucune connexion pour le moment.",
+
+  "apiErrorNetwork": "Impossible de joindre le serveur. Vérifiez votre connexion et réessayez.",
+  "apiErrorServer": "Le serveur a rencontré un problème avec cette demande. Veuillez réessayer.",
+  "locationErrorServicesDisabled": "Les services de localisation sont désactivés. Activez la localisation dans les paramètres de votre appareil et réessayez.",
+  "locationErrorPermissionDenied": "L'autorisation de localisation a été refusée.",
+  "locationErrorPermissionDeniedForever": "L'autorisation de localisation est refusée définitivement. Activez-la pour AfriShield dans les paramètres de votre appareil."
 }

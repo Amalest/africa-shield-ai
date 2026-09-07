@@ -1,24 +1,29 @@
 import 'package:firebase_core/firebase_core.dart' show FirebaseOptions;
 import 'package:flutter/foundation.dart' show defaultTargetPlatform, kIsWeb, TargetPlatform;
 
-/// **Placeholder values — push notifications will not work until these
-/// are replaced with a real Firebase project's config.** No Firebase
-/// project has been created for AfriShield yet (that's an external
-/// account/console step nobody has done — see `todo.md`).
+/// **Real values — generated 2026-08-29 by `flutterfire configure`
+/// against a real Firebase project** (`afrishield-ai-flood`), not
+/// placeholders. Regenerate with:
+/// ```
+/// cd mobile-app
+/// flutterfire configure --project=afrishield-ai-flood --platforms=android,ios,web \
+///   --android-package-name=com.afrishield.afrishield_mobile \
+///   --ios-bundle-id=com.afrishield.afrishieldMobile --yes --overwrite-firebase-options
+/// ```
+/// if the project ever changes. These `apiKey` values are not secrets —
+/// Firebase's own security model relies on Security Rules/App Check, not
+/// on hiding client config — but they're still tied to a real project,
+/// so don't casually swap them for a different one without updating
+/// `backend/.env`'s `FIREBASE_SERVICE_ACCOUNT_JSON` too (a *separate*
+/// credential for the backend side, generated from the Firebase console's
+/// Project Settings > Service Accounts tab — this file alone is not
+/// enough for the backend to send pushes, only for the app to receive
+/// them).
 ///
-/// To enable real push notifications:
-/// 1. Create a free project at https://console.firebase.google.com/.
-/// 2. Run `flutterfire configure` from `mobile-app/` (installs via
-///    `dart pub global activate flutterfire_cli` if needed) — it
-///    overwrites this entire file with your real project's values for
-///    every platform, and registers the Android/iOS/web apps for you.
-/// 3. Also generate a service-account key for the *backend* side (a
-///    separate credential) — see `backend/.env.example`'s
-///    `FIREBASE_SERVICE_ACCOUNT_JSON`.
-///
-/// Until then, `PushService` (see `lib/services/push_service.dart`)
-/// catches the failure this causes and reports push as unavailable —
-/// the rest of the app is unaffected either way.
+/// Web push (`FirebaseMessaging.getToken()` in the browser) additionally
+/// needs a VAPID key from Project Settings > Cloud Messaging > Web
+/// configuration > Web Push certificates — see `PushService`'s doc
+/// comment for whether that's been wired in yet.
 class DefaultFirebaseOptions {
   static FirebaseOptions get currentPlatform {
     if (kIsWeb) return web;
@@ -33,28 +38,27 @@ class DefaultFirebaseOptions {
   }
 
   static const FirebaseOptions web = FirebaseOptions(
-    apiKey: 'REPLACE_WITH_REAL_FIREBASE_WEB_API_KEY',
-    appId: 'REPLACE_WITH_REAL_FIREBASE_WEB_APP_ID',
-    messagingSenderId: 'REPLACE_WITH_REAL_SENDER_ID',
-    projectId: 'REPLACE_WITH_REAL_PROJECT_ID',
-    authDomain: 'REPLACE_WITH_REAL_PROJECT_ID.firebaseapp.com',
-    storageBucket: 'REPLACE_WITH_REAL_PROJECT_ID.appspot.com',
+    apiKey: 'AIzaSyBSgkShcABcc4AKM6-4uZO_WF6sMLRthM0',
+    appId: '1:181757369168:web:6be06dd37663bfbd352a55',
+    messagingSenderId: '181757369168',
+    projectId: 'afrishield-ai-flood',
+    authDomain: 'afrishield-ai-flood.firebaseapp.com',
+    storageBucket: 'afrishield-ai-flood.firebasestorage.app',
   );
 
   static const FirebaseOptions android = FirebaseOptions(
-    apiKey: 'REPLACE_WITH_REAL_FIREBASE_ANDROID_API_KEY',
-    appId: 'REPLACE_WITH_REAL_FIREBASE_ANDROID_APP_ID',
-    messagingSenderId: 'REPLACE_WITH_REAL_SENDER_ID',
-    projectId: 'REPLACE_WITH_REAL_PROJECT_ID',
-    storageBucket: 'REPLACE_WITH_REAL_PROJECT_ID.appspot.com',
+    apiKey: 'AIzaSyA3S5b-5RWdjpYFlEhLg1fraeUfElsEmWg',
+    appId: '1:181757369168:android:5b83b175c2eaa74c352a55',
+    messagingSenderId: '181757369168',
+    projectId: 'afrishield-ai-flood',
+    storageBucket: 'afrishield-ai-flood.firebasestorage.app',
   );
-
   static const FirebaseOptions ios = FirebaseOptions(
-    apiKey: 'REPLACE_WITH_REAL_FIREBASE_IOS_API_KEY',
-    appId: 'REPLACE_WITH_REAL_FIREBASE_IOS_APP_ID',
-    messagingSenderId: 'REPLACE_WITH_REAL_SENDER_ID',
-    projectId: 'REPLACE_WITH_REAL_PROJECT_ID',
-    storageBucket: 'REPLACE_WITH_REAL_PROJECT_ID.appspot.com',
+    apiKey: 'AIzaSyBwdqC5GeO3tJKwY6CwOGe6nclJvSTtDag',
+    appId: '1:181757369168:ios:4e3b731787e50e7e352a55',
+    messagingSenderId: '181757369168',
+    projectId: 'afrishield-ai-flood',
+    storageBucket: 'afrishield-ai-flood.firebasestorage.app',
     iosBundleId: 'com.afrishield.afrishieldMobile',
   );
 }

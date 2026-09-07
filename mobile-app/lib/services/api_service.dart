@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:typed_data';
+import 'package:flutter_gen/gen_l10n/app_localizations.dart';
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart' as http_parser;
 
@@ -8,11 +9,30 @@ import '../models/alert.dart';
 import '../models/hazard_report.dart';
 import '../models/region.dart';
 
+enum ApiErrorKind { network, server }
+
 class ApiException implements Exception {
-  final String message;
-  ApiException(this.message);
+  final ApiErrorKind kind;
+  final String debugDetail;
+  ApiException(this.kind, this.debugDetail);
+
+  /// Technical, English-only detail (e.g. the exact status code and
+  /// URL) — for logs/debugging, not the UI.
   @override
-  String toString() => message;
+  String toString() => debugDetail;
+
+  /// User-facing, translated message. Exceptions are thrown from this
+  /// service class with no `BuildContext` to localize with directly, so
+  /// callers (which do have one) resolve the actual string via this
+  /// method instead of showing [toString]'s raw English detail.
+  String localizedMessage(AppLocalizations l10n) {
+    switch (kind) {
+      case ApiErrorKind.network:
+        return l10n.apiErrorNetwork;
+      case ApiErrorKind.server:
+        return l10n.apiErrorServer;
+    }
+  }
 }
 
 /// Thin wrapper over the real backend. Every method here hits an endpoint
@@ -60,6 +80,7 @@ class ApiService {
           .timeout(const Duration(seconds: 10));
       if (response.statusCode != 201) {
         throw ApiException(
+          ApiErrorKind.server,
           'Backend returned ${response.statusCode} for $uri',
         );
       }
@@ -68,7 +89,7 @@ class ApiService {
     } on ApiException {
       rethrow;
     } catch (e) {
-      throw ApiException('Could not reach the backend: $e');
+      throw ApiException(ApiErrorKind.network, 'Could not reach the backend: $e');
     }
   }
 
@@ -98,13 +119,14 @@ class ApiService {
       final response = await http.Response.fromStream(streamedResponse);
       if (response.statusCode != 200) {
         throw ApiException(
+          ApiErrorKind.server,
           'Backend returned ${response.statusCode} for $uri',
         );
       }
     } on ApiException {
       rethrow;
     } catch (e) {
-      throw ApiException('Could not reach the backend: $e');
+      throw ApiException(ApiErrorKind.network, 'Could not reach the backend: $e');
     }
   }
 
@@ -115,6 +137,7 @@ class ApiService {
           );
       if (response.statusCode != 200) {
         throw ApiException(
+          ApiErrorKind.server,
           'Backend returned ${response.statusCode} for $uri',
         );
       }
@@ -122,7 +145,7 @@ class ApiService {
     } on ApiException {
       rethrow;
     } catch (e) {
-      throw ApiException('Could not reach the backend: $e');
+      throw ApiException(ApiErrorKind.network, 'Could not reach the backend: $e');
     }
   }
 }

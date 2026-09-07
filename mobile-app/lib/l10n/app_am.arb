@@ -200,5 +200,11 @@
   "navReports": "ሪፖርቶች",
 
   "unknownTime": "ያልታወቀ ሰዓት",
-  "showingSavedData": "ከ{when} ጀምሮ የተቀመጠ መረጃ እየታየ ነው — ለጊዜው ግንኙነት የለም።"
+  "showingSavedData": "ከ{when} ጀምሮ የተቀመጠ መረጃ እየታየ ነው — ለጊዜው ግንኙነት የለም።",
+
+  "apiErrorNetwork": "አገልጋዩን ማግኘት አልተቻለም። ግንኙነትዎን ያረጋግጡና እንደገና ይሞክሩ።",
+  "apiErrorServer": "አገልጋዩ ይህን ጥያቄ በማስተናገድ ላይ ችግር አጋጥሞታል። እባክዎ እንደገና ይሞክሩ።",
+  "locationErrorServicesDisabled": "የአካባቢ አገልግሎቶች ጠፍተዋል። በመሳሪያዎ ቅንብሮች ውስጥ የአካባቢ አገልግሎትን ያብሩና እንደገና ይሞክሩ።",
+  "locationErrorPermissionDenied": "የአካባቢ ፈቃድ ተከልክሏል።",
+  "locationErrorPermissionDeniedForever": "የአካባቢ ፈቃድ በቋሚነት ተከልክሏል። ለAfriShield በመሳሪያዎ ቅንብሮች ውስጥ ያንቁት።"
 }

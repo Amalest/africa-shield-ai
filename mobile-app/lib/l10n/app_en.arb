@@ -257,5 +257,11 @@
     "placeholders": {
       "when": { "type": "String" }
     }
-  }
+  },
+
+  "apiErrorNetwork": "Could not reach the backend. Check your connection and try again.",
+  "apiErrorServer": "The server had a problem with that request. Please try again.",
+  "locationErrorServicesDisabled": "Location services are turned off. Enable location in your device settings and try again.",
+  "locationErrorPermissionDenied": "Location permission was denied.",
+  "locationErrorPermissionDeniedForever": "Location permission is permanently denied. Enable it for AfriShield in your device settings."
 }

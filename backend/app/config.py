@@ -21,3 +21,12 @@ AT_VOICE_NUMBER = os.environ.get("AT_VOICE_NUMBER")  # required only for voice c
 # push notifications simulate/skip cleanly without it, same pattern as the
 # Africa's Talking vars above. See app/models/push_gateway.py.
 FIREBASE_SERVICE_ACCOUNT_JSON = os.environ.get("FIREBASE_SERVICE_ACCOUNT_JSON")
+
+# Signs/verifies admin JWT session tokens (see app/auth.py). Unlike the
+# vars above, auth can't "simulate" without a secret — it always needs
+# one to function at all. Falls back to a fixed, publicly-known demo
+# value so the admin API works out of the box for the hackathon; anyone
+# deploying this for real MUST set a real secret in .env, or every admin
+# session token is forgeable. app/auth.py prints a warning at import time
+# if this default is still in use.
+ADMIN_JWT_SECRET = os.environ.get("ADMIN_JWT_SECRET", "afrishield-hackathon-demo-secret-change-me")

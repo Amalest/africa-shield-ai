@@ -23,6 +23,7 @@ backend/app/data/alert_log.json
 backend/app/data/region_alert_state.json
 backend/app/data/hazard_reports.json
 backend/app/data/hazard_report_photos/
+backend/app/data/admins.json
 
 # Editor/OS
 .vscode/

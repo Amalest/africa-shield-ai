@@ -5,6 +5,236 @@ first for current state; scroll down for history.
 
 ---
 
+## 2026-09-07 — Admin Command Center API built, at Habiba's request
+
+Habiba asked (via Matthias) for a specific list of endpoints to connect
+the admin web dashboard to the real backend: admin signup/login,
+report/incident CRUD, dashboard stats, AI priority/triage, incident
+status management, assistance assignment/response dispatch, and an
+incident map — while explicitly keeping the existing
+`GET`/`POST /api/hazard-reports` + photo endpoints unchanged.
+
+### Completed
+- **Real admin authentication** — new `app/auth.py`: bcrypt-hashed
+  passwords (never stored/logged in plaintext), signed JWTs (PyJWT,
+  HS256, 24h lifetime), `app/data/admins.json` (gitignored — holds
+  password hashes, unlike seed-data files). `POST /api/admin/signup`,
+  `POST /api/admin/login`, `GET /api/admin/me`. `ADMIN_JWT_SECRET`
+  (`app/config.py`) has a fixed demo fallback if `.env` doesn't set one —
+  flagged honestly (a startup warning + doc comments) as forgeable in
+  that state, since auth can't degrade to "simulated" the way SMS/push
+  do; a real deployment must set its own secret.
+- **Incident management, additive to `hazard_reports.json`** — every
+  report now also carries `status` (`new`/`verifying`/`prioritized`/
+  `assigned`/`responding`/`resolved`, with a full `status_history` audit
+  trail of who changed what and when), `verified`/`verified_by`/
+  `verified_at`/`verification_notes` (evidence review), and
+  `assigned_to`/`assigned_by`. **`GET`/`POST /api/hazard-reports` and the
+  photo endpoints keep their exact existing response shape** (Pydantic
+  quietly drops the new fields from those specific response models) —
+  only the new admin routes read/write them. One new sibling endpoint,
+  `GET /api/hazard-reports/{id}` (single report, unauthenticated like its
+  siblings), was added alongside the existing two.
+- **AI priority/triage — a real, explainable rules-based scorer**
+  (`app/models/priority_model.py`), same design philosophy as
+  `risk_model.py`: a weighted sum of 5 factors (`needs_assistance` 0.40,
+  `region_risk_level` 0.30 via the existing risk model, `category` 0.15
+  keyword-matched, `evidence` 0.05 has-a-photo, `report_age` 0.10 capped
+  at 24h) bucketed into `critical`/`high`/`medium`/`low`, with every
+  factor's contribution shown in the response — not an opaque score.
+  `GET /api/admin/incidents/prioritized` and
+  `GET /api/admin/assistance-requests` both rank by it.
+- **Assistance & response dispatch** — `POST
+  /api/admin/assistance-requests/{id}/assign` (assigns a
+  responder/team, advances status); `POST
+  /api/admin/incidents/{id}/response` sends via `sms`/`voice` (reusing
+  the exact same Africa's Talking gateways `POST /api/alerts/send`
+  already uses — real send if configured + recipients given, simulated
+  otherwise) or `radio`/`community_leader` (**always simulated** — no
+  real radio-station or community-leader integration has ever been built
+  for this project, logged honestly rather than faking a broadcast);
+  `GET /api/admin/incidents/{id}/responses` for the full history.
+- **Dashboard stats** (`GET /api/admin/dashboard/stats`) and **incident
+  map** (`GET /api/admin/incidents/map`, skips reports with no GPS fix
+  rather than guessing a location) — both computed live from
+  `hazard_reports.json` on every call.
+- New dependencies: `bcrypt`, `pyjwt` (was already a transitive dependency
+  via `firebase-admin`, now declared directly since it's called
+  directly), `email-validator` (for `pydantic.EmailStr`) — added to
+  `requirements.txt`.
+- **Verified end-to-end via `curl`, not just import-checked**: full
+  lifecycle tested against a locally running server — signup → duplicate
+  signup (409) → login → wrong password (401) → `/me` with and without a
+  token (401 without) → create a hazard report → single-report GET
+  (unauthenticated, works) → dashboard stats (401 unauthenticated, real
+  numbers authenticated) → prioritized incidents (correctly ranked a
+  `needs_assistance: true` Lagos "Trapped" report at `priority_score:
+  0.85`/`critical` above a routine low-risk Nairobi report at `0.0`/`low`)
+  → verify → assign → send an sms response (no recipients → correctly
+  `"simulated"`) → send a radio response (correctly always `"simulated"`)
+  → response history → status→`resolved` → incident map → stats
+  reflecting the resolved count. Confirmed the pre-existing
+  `GET /api/hazard-reports` and the OpenAPI schema (`/openapi.json`, 27
+  unique paths, no route collisions) both still work unchanged. Test data
+  (`admins.json`, `hazard_reports.json`) deleted afterward — both are
+  gitignored runtime state, never committed.
+
+### Not yet started
+- Frontend (`frontend-web/`) isn't wired to any of this yet — this
+  session only built and verified the backend API surface Habiba asked
+  for; connecting the dashboard's UI to it is separate work.
+- No password-reset flow, no admin-account deletion/deactivation, no
+  role-based permission tiers (every admin account can do everything) —
+  none of these were asked for; flagging as an intentionally unscoped gap
+  if the dashboard grows multiple admin roles later.
+- `ADMIN_JWT_SECRET` still needs a real value set in `backend/.env`
+  before any real (non-hackathon-demo) deployment — see the warning
+  `app/auth.py` prints at import time if it's still on the default.
+- The priority-scoring weights are a first, reasonable-looking pass
+  (same "tuned to look sane for the demo" standard as `risk_model.py`'s
+  thresholds) — not validated against any real incident-triage dataset,
+  since none exists for this project.
+
+---
+
+## 2026-08-29 — Push notification setup fully wired: VAPID key + backend service-account key
+
+Closes out the two remaining Firebase setup steps from earlier today.
+
+### Completed
+- **Generated a real Web Push VAPID key** (Project Settings > Cloud
+  Messaging > Web configuration > Web Push certificates) and set it as
+  `PushService._webVapidKey` in `mobile-app/lib/services/push_service.dart`
+  (previously `null`). Fixed a resulting `unnecessary_nullable_for_final_
+  variable_declarations` lint by narrowing the field's type from
+  `String?` to `String` now that it always has a value.
+  `flutter analyze` — "No issues found!".
+- **Generated a real backend service-account key** (Project Settings >
+  Service Accounts > Firebase Admin SDK > Generate new private key),
+  saved outside the repo, and pointed `backend/.env`'s
+  `FIREBASE_SERVICE_ACCOUNT_JSON` at its path (`backend/.env` is
+  gitignored, so this is a local-only change, not committed).
+- Verified both ends: `app.models.push_gateway.is_configured()` now
+  returns `True` (previously `False` with no credential set), and
+  `app.main` still imports cleanly with the credential wired in.
+
+### Not yet started
+- Android/iOS token registration is wired up but untested — no
+  device/emulator available in this environment.
+- No actual push notification has been triggered end-to-end and
+  observed arriving anywhere yet — only the configuration plumbing has
+  been verified (`is_configured()`, clean imports, `flutter analyze`),
+  not a real delivered notification via `POST /api/alerts/send` or
+  `POST /api/push-tokens`.
+
+---
+
+## 2026-08-29 — Real Firebase project created; `flutterfire configure` wired into the mobile app
+
+### Completed
+- **Created a real Firebase project**, `afrishield-ai-flood`. This took
+  more steps than expected because of two separate account-level
+  restrictions, not code issues:
+  - The first Google account used hit "You've reached the project limit
+    for your account" when creating a project in the Firebase console.
+  - Switched to a second Google account and created a project there via
+    the browser, but `firebase projects:list` under the CLI login for
+    that same account showed no projects — a genuine account/project
+    mismatch (confirmed by checking which email the CLI's local config
+    was actually authenticated as). Rather than keep debugging that,
+    created the Firebase project fresh via the CLI instead:
+    `firebase projects:create afrishield-ai-flood` — this succeeded for
+    the underlying GCP project, but the following "add Firebase
+    resources" step failed with `403 PERMISSION_DENIED` on
+    `firebase.googleapis.com:addFirebase` (confirmed via
+    `firebase-debug.log`, not just the summary error) — a known
+    restriction on fresh Google accounts calling that API directly.
+    Worked around it by adding Firebase to the *existing* GCP project via
+    the Firebase console's "Add project" flow (browser calls, unlike raw
+    API calls, aren't subject to the same restriction) — this succeeded.
+- **Ran `flutterfire configure`** from `mobile-app/` against the now
+  Firebase-enabled project:
+  ```
+  flutterfire configure --project=afrishield-ai-flood --platforms=android,ios,web \
+    --android-package-name=com.afrishield.afrishield_mobile \
+    --ios-bundle-id=com.afrishield.afrishieldMobile --yes --overwrite-firebase-options
+  ```
+  Generated real `lib/firebase_options.dart` (replacing the old
+  placeholder values), `android/app/google-services.json`, and
+  `mobile-app/firebase.json`; auto-applied the standard
+  `com.google.gms.google-services` Gradle plugin to
+  `android/app/build.gradle.kts` and `android/settings.gradle.kts`
+  (superseding an earlier no-plugin workaround that existed only because
+  there was no real project to point it at yet).
+- Updated `PushService` to pass a (currently `null`) web VAPID key to
+  `FirebaseMessaging.instance.getToken()` only on web
+  (`kIsWeb`) — Android/iOS ignore that parameter.
+- Verified nothing broke: `flutter pub get`, `flutter analyze` ("No
+  issues found!"), `flutter test` (all passed), and a fresh
+  `flutter run -d chrome` all succeeded with the new config in place.
+- Updated `mobile-app/README.md` (feature table, Structure section,
+  Known gaps) to describe the real project instead of the old
+  placeholder state.
+
+### Not yet started
+- **Web Push VAPID key** — needed before `getToken()` works in a
+  browser. Generate at Project Settings > Cloud Messaging > Web
+  configuration > Web Push certificates, then fill into
+  `PushService._webVapidKey`.
+- **Backend service-account credential** — a separate credential from
+  Project Settings > Service Accounts > Generate new private key, needed
+  in `backend/.env`'s `FIREBASE_SERVICE_ACCOUNT_JSON` before the backend
+  can actually send any push notification (the mobile-side config alone
+  only lets the app *receive*, not the backend *send*).
+- Android/iOS push registration is wired up but untested — no
+  device/emulator available in this environment.
+
+---
+
+## 2026-08-29 — Localized runtime error messages; cross-verified 10 countries' emergency numbers
+
+Closing out the two remaining mobile gaps that didn't need an account,
+a real device, or the (explicitly deprioritized) translation review.
+
+### Completed
+- **`ApiException`/`LocationException` are localized now**, not
+  English-only. Both used to carry a raw English `message` string set
+  at throw time, deep in a service class with no `BuildContext` to
+  localize with. Redesigned so each carries an error-*kind* enum
+  (`ApiErrorKind.network`/`.server`; `LocationErrorKind
+  .servicesDisabled`/`.permissionDenied`/`.permissionDeniedForever`)
+  plus a `debugDetail` string (kept English-only, for logs — e.g. the
+  exact status code and URL). UI call sites (which do have a
+  `BuildContext`) call `e.localizedMessage(l10n)` instead of
+  `e.toString()`/`e.message`. Added 5 new keys to all 7 `lib/l10n/*.arb`
+  files. `image_picker`'s own native platform error strings (a separate,
+  third-party `catch (e)` in `reports_screen.dart`) are out of scope —
+  we don't control what language a native OS exception is thrown in.
+- **Cross-verified emergency numbers for the 10 currently monitored
+  countries** against a second, independent source (UK gov.uk's
+  `foreign-travel-advice/.../getting-help` pages) — the original
+  2026-08-28 data was single-sourced from Wikipedia only. **Found 4 real
+  discrepancies**: Kenya (was 112, gov.uk says 999 — Wikipedia listed
+  112 as *also* valid, but 999 is what the independent source leads
+  with), Egypt (was 112, gov.uk says 122 and doesn't mention 112 at
+  all), Uganda (was 112, gov.uk says 999), Mozambique (was 119, gov.uk
+  states a unified 112). The other 6 of the 10 (Nigeria, Ghana,
+  Tanzania, DRC, Somalia, Ethiopia) matched exactly — corrected the 4,
+  annotated all 10 in `emergency_numbers.dart` with which were checked
+  and against what. The other 44 countries remain single-sourced from
+  Wikipedia only.
+- `flutter analyze` and `flutter test` both pass clean.
+
+### Not yet started
+- The 44 non-monitored countries' emergency numbers are still
+  single-sourced — same standing caveat as before, just narrower in
+  scope now.
+- `image_picker`'s native error strings are still English-only —
+  documented as a real, structural boundary (third-party plugin error
+  text), not something fixable from this side.
+
+---
+
 ## 2026-08-29 — Merged Habiba's frontend dashboard work (was stuck unmerged since 2026-08-16)
 
 ### Completed

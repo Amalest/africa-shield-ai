@@ -81,6 +81,18 @@ Presentation & Pitch 5.
 
 - [ ] Everything above under "Critical" — a demo that only shows
       "(simulated)" labels undercuts this criterion directly.
+- [x] **Admin Command Center backend API built (2026-09-07), at Habiba's
+      request.** Admin signup/login/me (bcrypt + JWT), incident
+      management (status workflow + evidence verification, additive
+      fields on `hazard_reports.json`), AI-explainable priority/triage
+      scoring, assistance assignment, multi-channel response dispatch
+      (sms/voice real via Africa's Talking, radio/community_leader always
+      simulated — no such integration exists), response history,
+      dashboard stats, and an incident map. Verified end-to-end via curl.
+      See `docs/api-contract.md`'s "Admin Command Center API" section and
+      `docs/progress-log.md`'s 2026-09-07 entry. **Not done yet: the
+      frontend dashboard isn't wired to any of it** — that's the next
+      step, on Habiba's side.
 - [ ] Frontend cleanup (left to the frontend team, doesn't block the demo
       but worth doing before judging):
   - [ ] Move the hardcoded `http://localhost:8000` API URL (duplicated in

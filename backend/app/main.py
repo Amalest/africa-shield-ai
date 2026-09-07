@@ -5,7 +5,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.routes import alerts, hazard_reports, push_tokens, regions, risk, sensors, ussd, voice
+from app.routes import admin_auth, admin_reports, alerts, hazard_reports, push_tokens, regions, risk, sensors, subscribers, ussd, voice
 
 app = FastAPI(
     title="Africa Shield AI - Last-Mile Alert API",
@@ -26,7 +26,22 @@ app = FastAPI(
         "GET /api/hazard-reports/{id}/photo serves it back. "
         "POST /api/push-tokens registers a device for real push notifications "
         "(Firebase Cloud Messaging) alongside SMS/voice, when configured — see "
-        ".env.example; DELETE /api/push-tokens/{token} unregisters one."
+        ".env.example; DELETE /api/push-tokens/{token} unregisters one. "
+        "POST /api/subscribers registers a phone number for SMS/voice alerts for "
+        "a region (the smartphone-app equivalent of the USSD 'Subscribe' menu); "
+        "DELETE /api/subscribers/{phone_number} unregisters one. "
+        "POST /api/admin/signup and POST /api/admin/login create/authenticate an "
+        "AfriShield Admin Command Center account, returning a bearer token; every "
+        "/api/admin/* route below requires it. GET /api/admin/dashboard/stats, "
+        "GET /api/admin/incidents/prioritized (AI triage, ranked, with an "
+        "explainable factor breakdown), GET /api/admin/incidents/map, "
+        "PATCH /api/admin/incidents/{id}/status, POST /api/admin/incidents/{id}/verify, "
+        "GET /api/admin/assistance-requests, "
+        "POST /api/admin/assistance-requests/{id}/assign, "
+        "POST /api/admin/incidents/{id}/response (sms/voice/radio/community_leader), "
+        "and GET /api/admin/incidents/{id}/responses cover incident management for "
+        "the admin dashboard, built on top of the same hazard-report records as "
+        "POST/GET /api/hazard-reports above."
     ),
     version="0.1.0",
 )
@@ -47,6 +62,9 @@ app.include_router(voice.router)
 app.include_router(sensors.router)
 app.include_router(hazard_reports.router)
 app.include_router(push_tokens.router)
+app.include_router(subscribers.router)
+app.include_router(admin_auth.router)
+app.include_router(admin_reports.router)
 
 
 @app.exception_handler(RequestValidationError)
@@ -80,7 +98,21 @@ def root() -> dict:
             "/api/voice/callback",
             "/api/sensor-reading",
             "/api/hazard-reports",
+            "/api/hazard-reports/{id}",
             "/api/hazard-reports/{id}/photo",
             "/api/push-tokens",
+            "/api/subscribers",
+            "/api/admin/signup",
+            "/api/admin/login",
+            "/api/admin/me",
+            "/api/admin/dashboard/stats",
+            "/api/admin/incidents/prioritized",
+            "/api/admin/incidents/map",
+            "/api/admin/incidents/{id}/status",
+            "/api/admin/incidents/{id}/verify",
+            "/api/admin/incidents/{id}/response",
+            "/api/admin/incidents/{id}/responses",
+            "/api/admin/assistance-requests",
+            "/api/admin/assistance-requests/{id}/assign",
         ],
     }

@@ -5,6 +5,98 @@ first for current state; scroll down for history.
 
 ---
 
+## 2026-09-07 — Admin Command Center API built, at Habiba's request
+
+Habiba asked (via Matthias) for a specific list of endpoints to connect
+the admin web dashboard to the real backend: admin signup/login,
+report/incident CRUD, dashboard stats, AI priority/triage, incident
+status management, assistance assignment/response dispatch, and an
+incident map — while explicitly keeping the existing
+`GET`/`POST /api/hazard-reports` + photo endpoints unchanged.
+
+### Completed
+- **Real admin authentication** — new `app/auth.py`: bcrypt-hashed
+  passwords (never stored/logged in plaintext), signed JWTs (PyJWT,
+  HS256, 24h lifetime), `app/data/admins.json` (gitignored — holds
+  password hashes, unlike seed-data files). `POST /api/admin/signup`,
+  `POST /api/admin/login`, `GET /api/admin/me`. `ADMIN_JWT_SECRET`
+  (`app/config.py`) has a fixed demo fallback if `.env` doesn't set one —
+  flagged honestly (a startup warning + doc comments) as forgeable in
+  that state, since auth can't degrade to "simulated" the way SMS/push
+  do; a real deployment must set its own secret.
+- **Incident management, additive to `hazard_reports.json`** — every
+  report now also carries `status` (`new`/`verifying`/`prioritized`/
+  `assigned`/`responding`/`resolved`, with a full `status_history` audit
+  trail of who changed what and when), `verified`/`verified_by`/
+  `verified_at`/`verification_notes` (evidence review), and
+  `assigned_to`/`assigned_by`. **`GET`/`POST /api/hazard-reports` and the
+  photo endpoints keep their exact existing response shape** (Pydantic
+  quietly drops the new fields from those specific response models) —
+  only the new admin routes read/write them. One new sibling endpoint,
+  `GET /api/hazard-reports/{id}` (single report, unauthenticated like its
+  siblings), was added alongside the existing two.
+- **AI priority/triage — a real, explainable rules-based scorer**
+  (`app/models/priority_model.py`), same design philosophy as
+  `risk_model.py`: a weighted sum of 5 factors (`needs_assistance` 0.40,
+  `region_risk_level` 0.30 via the existing risk model, `category` 0.15
+  keyword-matched, `evidence` 0.05 has-a-photo, `report_age` 0.10 capped
+  at 24h) bucketed into `critical`/`high`/`medium`/`low`, with every
+  factor's contribution shown in the response — not an opaque score.
+  `GET /api/admin/incidents/prioritized` and
+  `GET /api/admin/assistance-requests` both rank by it.
+- **Assistance & response dispatch** — `POST
+  /api/admin/assistance-requests/{id}/assign` (assigns a
+  responder/team, advances status); `POST
+  /api/admin/incidents/{id}/response` sends via `sms`/`voice` (reusing
+  the exact same Africa's Talking gateways `POST /api/alerts/send`
+  already uses — real send if configured + recipients given, simulated
+  otherwise) or `radio`/`community_leader` (**always simulated** — no
+  real radio-station or community-leader integration has ever been built
+  for this project, logged honestly rather than faking a broadcast);
+  `GET /api/admin/incidents/{id}/responses` for the full history.
+- **Dashboard stats** (`GET /api/admin/dashboard/stats`) and **incident
+  map** (`GET /api/admin/incidents/map`, skips reports with no GPS fix
+  rather than guessing a location) — both computed live from
+  `hazard_reports.json` on every call.
+- New dependencies: `bcrypt`, `pyjwt` (was already a transitive dependency
+  via `firebase-admin`, now declared directly since it's called
+  directly), `email-validator` (for `pydantic.EmailStr`) — added to
+  `requirements.txt`.
+- **Verified end-to-end via `curl`, not just import-checked**: full
+  lifecycle tested against a locally running server — signup → duplicate
+  signup (409) → login → wrong password (401) → `/me` with and without a
+  token (401 without) → create a hazard report → single-report GET
+  (unauthenticated, works) → dashboard stats (401 unauthenticated, real
+  numbers authenticated) → prioritized incidents (correctly ranked a
+  `needs_assistance: true` Lagos "Trapped" report at `priority_score:
+  0.85`/`critical` above a routine low-risk Nairobi report at `0.0`/`low`)
+  → verify → assign → send an sms response (no recipients → correctly
+  `"simulated"`) → send a radio response (correctly always `"simulated"`)
+  → response history → status→`resolved` → incident map → stats
+  reflecting the resolved count. Confirmed the pre-existing
+  `GET /api/hazard-reports` and the OpenAPI schema (`/openapi.json`, 27
+  unique paths, no route collisions) both still work unchanged. Test data
+  (`admins.json`, `hazard_reports.json`) deleted afterward — both are
+  gitignored runtime state, never committed.
+
+### Not yet started
+- Frontend (`frontend-web/`) isn't wired to any of this yet — this
+  session only built and verified the backend API surface Habiba asked
+  for; connecting the dashboard's UI to it is separate work.
+- No password-reset flow, no admin-account deletion/deactivation, no
+  role-based permission tiers (every admin account can do everything) —
+  none of these were asked for; flagging as an intentionally unscoped gap
+  if the dashboard grows multiple admin roles later.
+- `ADMIN_JWT_SECRET` still needs a real value set in `backend/.env`
+  before any real (non-hackathon-demo) deployment — see the warning
+  `app/auth.py` prints at import time if it's still on the default.
+- The priority-scoring weights are a first, reasonable-looking pass
+  (same "tuned to look sane for the demo" standard as `risk_model.py`'s
+  thresholds) — not validated against any real incident-triage dataset,
+  since none exists for this project.
+
+---
+
 ## 2026-08-29 — Push notification setup fully wired: VAPID key + backend service-account key
 
 Closes out the two remaining Firebase setup steps from earlier today.

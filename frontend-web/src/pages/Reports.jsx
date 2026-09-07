@@ -1,4 +1,3 @@
-
 import {
   Accessibility,
   AlertTriangle,
@@ -30,14 +29,6 @@ function Reports() {
   const [regions, setRegions] = useState([]);
   const [loadingRegions, setLoadingRegions] = useState(true);
   const [regionError, setRegionError] = useState("");
-
-  // ============================================================
-  // COMMUNITY HAZARD REPORTS
-  // ============================================================
-
-  const [hazardReports, setHazardReports] = useState([]);
-  const [loadingReports, setLoadingReports] = useState(true);
-  const [reportsError, setReportsError] = useState("");
 
   // ============================================================
   // FORM STATE
@@ -95,44 +86,12 @@ function Reports() {
   }, []);
 
   // ============================================================
-  // FETCH COMMUNITY HAZARD REPORTS
-  // ============================================================
-
-  const fetchHazardReports = useCallback(async () => {
-    try {
-      setLoadingReports(true);
-      setReportsError("");
-
-      const response = await fetch(REPORTS_API_URL);
-
-      if (!response.ok) {
-        throw new Error(
-          `Hazard reports API returned status ${response.status}`
-        );
-      }
-
-      const data = await response.json();
-
-      setHazardReports(Array.isArray(data) ? data : []);
-    } catch (error) {
-      console.error("Error fetching hazard reports:", error);
-
-      setReportsError(
-        error.message || "Unable to load community reports."
-      );
-    } finally {
-      setLoadingReports(false);
-    }
-  }, []);
-
-  // ============================================================
-  // LOAD DATA WHEN PAGE OPENS
+  // LOAD REGIONAL DATA WHEN PAGE OPENS
   // ============================================================
 
   useEffect(() => {
     fetchRegions();
-    fetchHazardReports();
-  }, [fetchRegions, fetchHazardReports]);
+  }, [fetchRegions]);
 
   // ============================================================
   // CLEAN UP PHOTO PREVIEW URL
@@ -239,27 +198,6 @@ function Reports() {
     return score <= 1
       ? Math.round(score * 100)
       : Math.round(score);
-  };
-
-  // ============================================================
-  // HELPER: FORMAT DATE
-  // ============================================================
-
-  const formatReportDate = (dateString) => {
-    if (!dateString) {
-      return "Unknown time";
-    }
-
-    const date = new Date(dateString);
-
-    if (Number.isNaN(date.getTime())) {
-      return "Unknown time";
-    }
-
-    return date.toLocaleString([], {
-      dateStyle: "medium",
-      timeStyle: "short",
-    });
   };
 
   // ============================================================
@@ -556,9 +494,6 @@ function Reports() {
       if (photoInput) {
         photoInput.value = "";
       }
-
-      // Refresh live reports
-      await fetchHazardReports();
     } catch (error) {
       console.error(
         "Error submitting hazard report:",
@@ -575,14 +510,11 @@ function Reports() {
   };
 
   // ============================================================
-  // REFRESH EVERYTHING
+  // REFRESH REGIONAL DATA
   // ============================================================
 
   const refreshAllData = async () => {
-    await Promise.all([
-      fetchRegions(),
-      fetchHazardReports(),
-    ]);
+    await fetchRegions();
   };
 
   return (
@@ -617,15 +549,13 @@ function Reports() {
           <button
             type="button"
             onClick={refreshAllData}
-            disabled={
-              loadingRegions || loadingReports
-            }
+            disabled={loadingRegions}
             className="inline-flex h-10 items-center justify-center gap-2 self-start rounded-xl border border-slate-200 bg-white px-4 text-xs font-bold text-slate-600 shadow-sm transition hover:border-blue-200 hover:bg-blue-50 hover:text-blue-600 disabled:cursor-not-allowed disabled:opacity-50 lg:self-auto"
           >
             <RefreshCw
               size={15}
               className={
-                loadingRegions || loadingReports
+                loadingRegions
                   ? "animate-spin"
                   : ""
               }
@@ -1065,12 +995,10 @@ function Reports() {
                     </p>
 
                     <p className="mt-1 text-xs leading-5 text-emerald-600">
-                      Your community hazard report has
-                      been received and added to the live
-                      community reports below.
-                      {selectedPhoto
-                        ? " Your photo was uploaded successfully."
-                        : ""}
+                      Your hazard report has been received
+                      and sent to the response team for
+                      review. Thank you for helping protect
+                      your community.
                     </p>
                   </div>
                 </div>
@@ -1281,214 +1209,6 @@ function Reports() {
             )}
           </section>
         </div>
-
-        {/* ======================================================
-            LIVE COMMUNITY REPORTS
-        ====================================================== */}
-
-        <section className="mt-6 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-          <div className="border-b border-slate-100 px-6 py-5">
-            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-              <div className="flex items-start gap-3">
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-blue-600">
-                  <Radio size={19} />
-                </div>
-
-                <div>
-                  <p className="text-[10px] font-extrabold uppercase tracking-[1.4px] text-blue-600">
-                    LIVE COMMUNITY REPORTS
-                  </p>
-
-                  <h2 className="mt-1 text-xl font-extrabold text-slate-900">
-                    Ground-Level Hazard Reports
-                  </h2>
-
-                  <p className="mt-1 text-xs leading-5 text-slate-400">
-                    Reports submitted by communities and
-                    retrieved directly from the FastAPI
-                    hazard-report service.
-                  </p>
-                </div>
-              </div>
-
-              <div className="flex items-center gap-2 rounded-full bg-blue-50 px-3 py-1.5">
-                <span className="h-2 w-2 animate-pulse rounded-full bg-blue-500" />
-
-                <span className="text-[10px] font-extrabold text-blue-600">
-                  {hazardReports.length} REPORT
-                  {hazardReports.length === 1
-                    ? ""
-                    : "S"}
-                </span>
-              </div>
-            </div>
-          </div>
-
-          {/* LOADING */}
-
-          {loadingReports && (
-            <div className="flex min-h-[220px] items-center justify-center">
-              <div className="flex flex-col items-center">
-                <RefreshCw
-                  size={24}
-                  className="animate-spin text-blue-500"
-                />
-
-                <p className="mt-3 text-xs font-semibold text-slate-400">
-                  Loading community reports...
-                </p>
-              </div>
-            </div>
-          )}
-
-          {/* ERROR */}
-
-          {!loadingReports && reportsError && (
-            <div className="flex min-h-[220px] flex-col items-center justify-center px-6 text-center">
-              <AlertTriangle
-                size={24}
-                className="text-red-500"
-              />
-
-              <p className="mt-3 text-sm font-bold text-slate-700">
-                Community reports unavailable
-              </p>
-
-              <p className="mt-1 max-w-md text-xs leading-5 text-slate-400">
-                {reportsError}
-              </p>
-
-              <button
-                type="button"
-                onClick={fetchHazardReports}
-                className="mt-4 inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-xs font-bold text-white transition hover:bg-blue-700"
-              >
-                <RefreshCw size={14} />
-                Try again
-              </button>
-            </div>
-          )}
-
-          {/* EMPTY */}
-
-          {!loadingReports &&
-            !reportsError &&
-            hazardReports.length === 0 && (
-              <div className="flex min-h-[220px] flex-col items-center justify-center px-6 text-center">
-                <div className="flex h-12 w-12 items-center justify-center rounded-full bg-slate-100 text-slate-400">
-                  <ClipboardList size={22} />
-                </div>
-
-                <p className="mt-4 text-sm font-bold text-slate-700">
-                  No community reports yet
-                </p>
-
-                <p className="mt-1 max-w-md text-xs leading-5 text-slate-400">
-                  When someone submits a hazard report,
-                  it will appear here automatically.
-                </p>
-              </div>
-            )}
-
-          {/* REPORT LIST */}
-
-          {!loadingReports &&
-            !reportsError &&
-            hazardReports.length > 0 && (
-              <div className="divide-y divide-slate-100">
-                {[...hazardReports]
-                  .reverse()
-                  .map((report) => (
-                    <div
-                      key={report.id}
-                      className="p-5 transition hover:bg-slate-50 sm:p-6"
-                    >
-                      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                        <div className="flex min-w-0 gap-4">
-                          <div
-                            className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${
-                              report.needs_assistance
-                                ? "bg-red-50 text-red-600"
-                                : "bg-blue-50 text-blue-600"
-                            }`}
-                          >
-                            {report.needs_assistance ? (
-                              <ShieldAlert size={18} />
-                            ) : (
-                              <ClipboardList size={18} />
-                            )}
-                          </div>
-
-                          <div className="min-w-0">
-                            <div className="flex flex-wrap items-center gap-2">
-                              <h3 className="text-sm font-extrabold text-slate-800">
-                                {report.category ||
-                                  "Hazard report"}
-                              </h3>
-
-                              {report.needs_assistance && (
-                                <span className="rounded-full bg-red-50 px-2.5 py-1 text-[9px] font-extrabold uppercase tracking-wide text-red-600">
-                                  Assistance needed
-                                </span>
-                              )}
-                            </div>
-
-                            <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-slate-400">
-                              <span className="inline-flex items-center gap-1">
-                                <MapPin size={12} />
-
-                                {report.location_name ||
-                                  "Unknown location"}
-                              </span>
-
-                              <span>
-                                {formatReportDate(
-                                  report.submitted_at
-                                )}
-                              </span>
-                            </div>
-
-                            {report.description && (
-                              <div className="mt-3 whitespace-pre-line rounded-xl bg-slate-50 p-3 text-xs leading-5 text-slate-600">
-                                {report.description}
-                              </div>
-                            )}
-
-                            {/* ATTACHED PHOTO */}
-
-                            {report.has_photo && (
-                              <div className="mt-3 overflow-hidden rounded-xl border border-slate-200 bg-slate-50">
-                                <img
-                                  src={`${REPORTS_API_URL}/${report.id}/photo`}
-                                  alt={`Evidence for ${
-                                    report.category ||
-                                    "hazard report"
-                                  }`}
-                                  className="max-h-80 w-full object-cover"
-                                  loading="lazy"
-                                />
-                              </div>
-                            )}
-                          </div>
-                        </div>
-
-                        <div className="flex shrink-0 items-center gap-2">
-                          {report.has_photo && (
-                            <span className="rounded-lg bg-indigo-50 px-2.5 py-1.5 text-[9px] font-bold text-indigo-600">
-                              PHOTO ATTACHED
-                            </span>
-                          )}
-
-                          <span className="rounded-lg bg-emerald-50 px-2.5 py-1.5 text-[9px] font-bold text-emerald-600">
-                            RECEIVED
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-              </div>
-            )}
-        </section>
 
         {/* ======================================================
             ACCESSIBILITY

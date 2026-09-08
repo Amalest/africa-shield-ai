@@ -22,6 +22,7 @@ from app.models.risk_model import compute_risk
 from app.models.sms_gateway import is_configured as is_sms_configured, send_sms
 from app.models.voice_gateway import is_configured as is_voice_configured, place_call
 from app.routes.hazard_reports import read_hazard_reports, write_hazard_reports
+from app.routes.subscribers import read_subscribers
 
 router = APIRouter()
 
@@ -49,6 +50,10 @@ class AssignRequest(BaseModel):
 class SendResponseRequest(BaseModel):
     channel: ResponseChannel
     message: str
+    # Only meaningful for radio/community_leader (station names, leader
+    # contacts — freeform, not dialed via a paid API). Ignored for
+    # sms/voice: see send_incident_response()'s docstring for why letting
+    # an admin pick arbitrary phone numbers here was a real vulnerability.
     recipients: list[str] | None = None
 
 
@@ -274,10 +279,20 @@ def send_incident_response(
     or `community_leader`, and appends it to the report's response
     history (`GET .../responses`).
 
-    `sms`/`voice` reuse the exact same Africa's Talking gateways
-    `POST /api/alerts/send` uses — a real send if `recipients` (phone
-    numbers) are given and Africa's Talking is configured, a clearly
-    labeled `"simulated"` send otherwise. `radio` and `community_leader`
+    **`sms`/`voice` recipients are always resolved from
+    `subscribers.json` for the report's own region — never from a
+    caller-supplied list.** Earlier this endpoint let an admin pass an
+    arbitrary `recipients` array, which (combined with self-registerable
+    admin accounts) turned this into an open SMS/voice relay against the
+    org's paid Africa's Talking account, able to message any phone number
+    at all, not just people actually affected by this incident. Real send
+    if the region has subscribers and Africa's Talking is configured, a
+    clearly labeled `"simulated"` send otherwise (`"no_recipients"` if the
+    region genuinely has none registered).
+
+    `radio` and `community_leader` still take `recipients` as freeform
+    text (station names, leader contacts) — there's no paid per-message
+    API behind either, so there's no abuse surface to close there. Both
     have no real dispatch integration at all (no radio station API or
     community-leader contact system has ever been built for this
     project) — every response on either channel is always `"simulated"`,
@@ -290,21 +305,22 @@ def send_incident_response(
     reports = read_hazard_reports()
     report = _get_report_or_404(reports, report_id)
 
-    recipients = payload.recipients or []
-    if payload.channel == "sms":
-        if is_sms_configured() and recipients:
+    if payload.channel in ("sms", "voice"):
+        recipients = [s["phone_number"] for s in read_subscribers() if s["location_name"] == report["location_name"]]
+        if not recipients:
+            send_status = "no_recipients"
+        elif payload.channel == "sms" and is_sms_configured():
             send_sms(recipients, payload.message)
             send_status = "sent"
-        else:
-            send_status = "simulated"
-    elif payload.channel == "voice":
-        if is_voice_configured() and recipients:
+        elif payload.channel == "voice" and is_voice_configured():
             place_call(recipients, payload.message)
             send_status = "sent"
         else:
             send_status = "simulated"
     else:
-        # radio / community_leader: no real dispatch integration exists.
+        # radio / community_leader: no real dispatch integration exists;
+        # payload.recipients here is freeform text, not phone numbers.
+        recipients = payload.recipients or []
         send_status = "simulated"
 
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")

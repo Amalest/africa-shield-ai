@@ -38,6 +38,9 @@
   "lgaFieldHint": "Digite seu governo local",
   "cityFieldLabel": "Cidade / Comunidade",
   "cityFieldHint": "Digite sua cidade / comunidade",
+  "phoneFieldLabel": "Número de telefone",
+  "phoneFieldHint": "ex. +234 800 000 0000",
+  "phoneFieldNote": "Opcional — necessário apenas para alertas por SMS, chamada de voz ou USSD. As notificações push não precisam dele.",
   "orDivider": "OU",
   "useMyCurrentLocation": "Usar minha localização atual",
   "gpsCapturedNote": "GPS capturado: {lat}, {lon}. Ainda não há busca automática de endereço, então preencha o estado/LGA/cidade abaixo.",
@@ -172,6 +175,22 @@
   "smsChannelTitle": "SMS",
   "smsChannelSubtitle": "Receba alertas por SMS mesmo sem internet.",
   "smsRealNote": "Real — enviado via Africa's Talking.",
+  "smsNoPhoneYet": "Adicione um número de telefone em Configurações > Localização primeiro — o SMS precisa de um número para enviar.",
+  "smsNoRegionYet": "Ainda não há uma região monitorada para você, então o SMS não pode ser configurado.",
+  "smsRegistrationFailed": "Não foi possível registrar seu número para alertas por SMS — verifique sua conexão e tente novamente.",
+  "smsEnabled": "Alertas por SMS ativados para este número.",
+  "smsDisabled": "Alertas por SMS desativados.",
+  "smsCodeRequestFailed": "Não foi possível solicitar um código de verificação — verifique sua conexão e tente novamente.",
+  "smsCodeDialogTitle": "Digite o código de verificação",
+  "smsCodeDialogBody": "Enviamos um código de 6 dígitos para {phone}. Digite-o abaixo para continuar.",
+  "@smsCodeDialogBody": {
+    "placeholders": {
+      "phone": { "type": "String" }
+    }
+  },
+  "smsCodeSimulatedNote": "O SMS não está configurado no servidor — este código é mostrado aqui apenas para teste.",
+  "smsCodeHint": "Código de 6 dígitos",
+  "smsCodeSubmitButton": "Verificar",
   "ussdChannelTitle": "USSD",
   "ussdChannelSubtitle": "Receba alertas em celulares básicos.",
   "ussdNote": "Implementado, mas ainda não verificado com uma operadora real.",

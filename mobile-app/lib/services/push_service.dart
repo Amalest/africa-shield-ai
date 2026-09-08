@@ -2,7 +2,7 @@ import 'dart:convert';
 
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show VoidCallback, kIsWeb;
 import 'package:http/http.dart' as http;
 
 import '../config/env.dart';
@@ -23,6 +23,15 @@ import '../firebase_options.dart';
 /// still degrades the same honest way: `enable()` returns `false`, never a
 /// fake success.
 class PushService {
+  /// Called whenever a push arrives while the app is in the foreground
+  /// (background/closed delivery is handled by the OS notification tray
+  /// instead — see `RootShell`'s app-lifecycle-resume refresh for that
+  /// case). Typically wired to `RegionProvider.load()` so Home reflects a
+  /// new alert immediately instead of waiting for a manual refresh.
+  final VoidCallback? onMessage;
+
+  PushService({this.onMessage});
+
   /// Generated 2026-08-29 from Firebase Console > Project Settings >
   /// Cloud Messaging > Web configuration > Web Push certificates. Only
   /// used on web (`FirebaseMessaging.getToken` ignores it on
@@ -52,6 +61,7 @@ class PushService {
       if (token == null) return false;
       _token = token;
       _initialized = true;
+      FirebaseMessaging.onMessage.listen((_) => onMessage?.call());
       return true;
     } catch (_) {
       // Covers every real failure mode (permission denied, no registered

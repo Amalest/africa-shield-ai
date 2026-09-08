@@ -38,6 +38,9 @@
   "lgaFieldHint": "የአካባቢ አስተዳደርዎን ያስገቡ",
   "cityFieldLabel": "ከተማ / ማህበረሰብ",
   "cityFieldHint": "ከተማዎን / ማህበረሰብዎን ያስገቡ",
+  "phoneFieldLabel": "ስልክ ቁጥር",
+  "phoneFieldHint": "ለምሳሌ +234 800 000 0000",
+  "phoneFieldNote": "አማራጭ ነው — ለኤስኤምኤስ፣ ለድምጽ ጥሪ ወይም ለUSSD ማንቂያዎች ብቻ ያስፈልጋል። ለፑሽ ማሳወቂያዎች አያስፈልግም።",
   "orDivider": "ወይም",
   "useMyCurrentLocation": "የአሁኑን አካባቢዬን ተጠቀም",
   "gpsCapturedNote": "GPS ተይዟል፦ {lat}, {lon}። ገና አድራሻ በራስ-ሰር የመፈለጊያ ዘዴ የለም፤ እባክዎ ከታች ያለውን ክልል/የአካባቢ አስተዳደር/ከተማ ይሙሉ።",
@@ -172,6 +175,22 @@
   "smsChannelTitle": "SMS",
   "smsChannelSubtitle": "ኢንተርኔት ባይኖርም እንኳ ማስጠንቀቂያዎችን በኤስኤምኤስ ይቀበሉ።",
   "smsRealNote": "እውነተኛ — በAfrica's Talking በኩል ይላካል።",
+  "smsNoPhoneYet": "መጀመሪያ በቅንብሮች > አካባቢ ውስጥ ስልክ ቁጥር ያክሉ — ኤስኤምኤስ የሚላክበት ቁጥር ያስፈልገዋል።",
+  "smsNoRegionYet": "እስካሁን ለእርስዎ የሚከታተል አካባቢ የለም፣ ስለዚህ ኤስኤምኤስ ማዋቀር አይቻልም።",
+  "smsRegistrationFailed": "ቁጥርዎን ለኤስኤምኤስ ማንቂያዎች መመዝገብ አልተቻለም — ግንኙነትዎን ያረጋግጡና እንደገና ይሞክሩ።",
+  "smsEnabled": "ለዚህ ቁጥር የኤስኤምኤስ ማንቂያዎች ነቅተዋል።",
+  "smsDisabled": "የኤስኤምኤስ ማንቂያዎች ጠፍተዋል።",
+  "smsCodeRequestFailed": "ማረጋገጫ ኮድ መጠየቅ አልተቻለም — ግንኙነትዎን ያረጋግጡና እንደገና ይሞክሩ።",
+  "smsCodeDialogTitle": "የማረጋገጫ ኮድ ያስገቡ",
+  "smsCodeDialogBody": "የ6 አሃዝ ኮድ ወደ {phone} ልከናል። ለመቀጠል ከዚህ በታች ያስገቡት።",
+  "@smsCodeDialogBody": {
+    "placeholders": {
+      "phone": { "type": "String" }
+    }
+  },
+  "smsCodeSimulatedNote": "ኤስኤምኤስ በአገልጋዩ ላይ አልተዋቀረም — ይህ ኮድ ለሙከራ ዓላማ ብቻ እዚህ ታይቷል።",
+  "smsCodeHint": "የ6 አሃዝ ኮድ",
+  "smsCodeSubmitButton": "አረጋግጥ",
   "ussdChannelTitle": "USSD",
   "ussdChannelSubtitle": "ማስጠንቀቂያዎችን በመሠረታዊ ስልኮች ላይ ይቀበሉ።",
   "ussdNote": "ተገንብቷል፣ ነገር ግን ገና በእውነተኛ አገልግሎት አቅራቢ ላይ አልተረጋገጠም።",

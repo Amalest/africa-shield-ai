@@ -20,6 +20,21 @@ ALLOWED_PHOTO_TYPES = {
 }
 
 
+def _sniff_image_extension(data: bytes) -> str | None:
+    """Identifies a file's real type from its magic bytes, ignoring
+    whatever `Content-Type` the client claimed — that header is
+    caller-controlled and easy to spoof (e.g. upload an HTML/script file
+    labeled `image/jpeg`). Returns `None` if the bytes don't match any of
+    the 3 allowed image signatures, regardless of the claimed type."""
+    if data.startswith(b"\xff\xd8\xff"):
+        return ".jpg"
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return ".png"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return ".webp"
+    return None
+
+
 class HazardReportRequest(BaseModel):
     category: str
     description: str | None = None
@@ -156,9 +171,11 @@ def create_hazard_report(payload: HazardReportRequest) -> HazardReportResponse:
 async def upload_hazard_report_photo(report_id: str, photo: UploadFile = File(...)) -> HazardReportResponse:
     """Attaches a photo to an already-created report — a separate step
     from `POST /api/hazard-reports` because that endpoint is plain JSON,
-    not multipart. 404s if `report_id` doesn't exist; 415 if the content
-    type isn't one of `image/jpeg`, `image/png`, `image/webp`; 413 if the
-    file is over 8MB. Stored as a plain file on local disk
+    not multipart. 404s if `report_id` doesn't exist; 415 if the file's
+    actual bytes aren't one of JPEG, PNG, or WebP (checked by magic-byte
+    signature, not by trusting the client's `Content-Type` header — that
+    header is easy to spoof and previously was the only check); 413 if
+    the file is over 8MB. Stored as a plain file on local disk
     (`app/data/hazard_report_photos/{report_id}.{ext}`) — matching this
     backend's existing "lightweight JSON-file + local storage" approach,
     not object storage. A second upload for the same `report_id`
@@ -168,16 +185,16 @@ async def upload_hazard_report_photo(report_id: str, photo: UploadFile = File(..
     if report is None:
         raise HTTPException(status_code=404, detail=f"Unknown hazard report id: {report_id}")
 
-    extension = ALLOWED_PHOTO_TYPES.get(photo.content_type or "")
-    if extension is None:
-        raise HTTPException(
-            status_code=415,
-            detail=f"Unsupported photo type: {photo.content_type}. Use JPEG, PNG, or WebP.",
-        )
-
     data = await photo.read()
     if len(data) > MAX_PHOTO_BYTES:
         raise HTTPException(status_code=413, detail="Photo is too large (max 8MB).")
+
+    extension = _sniff_image_extension(data)
+    if extension is None:
+        raise HTTPException(
+            status_code=415,
+            detail="File doesn't look like a JPEG, PNG, or WebP image (checked by content, not just its declared type).",
+        )
 
     HAZARD_REPORT_PHOTOS_DIR.mkdir(parents=True, exist_ok=True)
     for existing in HAZARD_REPORT_PHOTOS_DIR.glob(f"{report_id}.*"):

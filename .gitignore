@@ -24,6 +24,8 @@ backend/app/data/region_alert_state.json
 backend/app/data/hazard_reports.json
 backend/app/data/hazard_report_photos/
 backend/app/data/admins.json
+backend/app/data/revoked_jtis.json
+backend/app/data/pending_subscriber_verifications.json
 
 # Editor/OS
 .vscode/

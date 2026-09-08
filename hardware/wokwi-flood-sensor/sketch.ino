@@ -43,6 +43,15 @@ const char *SERVER_URL = "https://canvas-examination-writes-initially.trycloudfl
 // device's readings belong to.
 const char *DEVICE_ID = "esp32-demo-01";
 
+// Must match that same device's "device_key" in devices.json — the
+// backend rejects a reading (401) if this doesn't match, so a spoofed
+// reading can't be sent just by knowing (or guessing) DEVICE_ID. This is
+// the shared demo device's key, intentionally public here for anyone
+// running this simulation — generate a fresh one
+// (python -c "import secrets; print(secrets.token_hex(16))") and keep it
+// out of version control for a real, non-demo device.
+const char *DEVICE_KEY = "4b6f310ce39fe80edc96aea8dce01438";
+
 // ---- Analog input pins ----
 // GPIO34/GPIO35 are input-only ADC pins on the ESP32 — safe choices that
 // don't conflict with WiFi or other onboard peripherals.
@@ -121,6 +130,7 @@ void sendReading(float rainfallMm, float riverLevelM) {
   // sketch dependency-free and easy to read.
   String payload = "{";
   payload += "\"device_id\":\"" + String(DEVICE_ID) + "\",";
+  payload += "\"device_key\":\"" + String(DEVICE_KEY) + "\",";
   payload += "\"rainfall_mm_24h\":" + String(rainfallMm, 2) + ",";
   payload += "\"river_level_m\":" + String(riverLevelM, 2) + ",";
   payload += "\"timestamp\":\"" + currentTimestamp() + "\"";

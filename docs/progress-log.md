@@ -5,6 +5,138 @@ first for current state; scroll down for history.
 
 ---
 
+## 2026-09-07 (later same day) — Security audit and fixes: 5 high, 3 medium severity gaps closed
+
+A full-project security audit (backend, mobile, the Wokwi hardware sim —
+frontend-web had nothing comparable, since it has no wired-up code yet)
+found 5 high-severity and 3 medium-severity real, exploitable gaps.
+Every one is now fixed and verified end-to-end via curl against a
+running server (not just written and assumed correct). Full field-level
+detail in `docs/api-contract.md`'s status banner and each endpoint's own
+section; summary here.
+
+### Completed — high severity
+- **Admin signup had no gate at all** — any internet user could create a
+  full admin account with full incident-management access. Fixed:
+  `POST /api/admin/signup` now requires `signup_code` matching a new
+  `ADMIN_SIGNUP_CODE` env var; disabled entirely (503) if that's unset,
+  rather than silently open.
+- **`ADMIN_JWT_SECRET` fell back to a fixed, publicly-known value** —
+  forgeable by anyone who'd read this repo's source. Fixed
+  (`app/config.py`): an unset one now generates a real random secret via
+  `secrets.token_hex(32)` once per process start instead. Trade-off,
+  not a security concern: sessions don't survive a restart without a
+  persistent value set. Also added token revocation (`jti` claim +
+  `app/data/revoked_jtis.json`) and `POST /api/admin/logout`, so a
+  logged-out token stops working immediately instead of staying valid
+  for its full 24h.
+- **Sensor ingestion (`POST /api/sensor-reading`) had no authentication**
+  — the demo `device_id` (`esp32-demo-01`) is published in this repo's
+  own README, so anyone could spoof a reading and trigger a real
+  automatic SMS/voice/push alert, or flap it to spam subscribers. Fixed:
+  now requires a per-device `device_key` (`devices.json`), checked with
+  `hmac.compare_digest`. Generated one for the demo device and updated
+  `hardware/wokwi-flood-sensor/sketch.ino` to send it — documented
+  explicitly as a public demo key, real devices should get their own,
+  uncommitted.
+- **Subscribing/unsubscribing a phone number had zero ownership check**
+  — anyone could add *or remove* any real phone number from real flood
+  alerts just by knowing it, reachable via the direct API, the USSD
+  webhook, and (as of the mobile SMS-toggle work finished the same day)
+  the mobile app too. Fixed: new `POST /api/subscribers/verify/request`
+  sends a 6-digit code (real SMS if configured, returned directly in the
+  response for testing if not — same "never fake success" pattern as
+  everywhere else in this backend); `POST`/`DELETE /api/subscribers`
+  now both require it, single-use, 10-minute expiry. **Also discovered
+  and fixed a real crash while testing this**: `send_sms()` propagates
+  a `ValueError` when the `africastalking` SDK rejects a malformed phone
+  number client-side, which was unhandled and produced a raw 500 — now
+  caught and returned as a clean `502`.
+- **The USSD webhook trusted a caller-supplied `phoneNumber` with no
+  check on who was actually calling it** — anyone could POST directly to
+  `/api/ussd` pretending to be any phone number. Fixed: optional HTTP
+  Basic Auth (`USSD_WEBHOOK_USERNAME`/`PASSWORD`, embeddable in the
+  webhook URL Africa's Talking calls) — off by default, matching this
+  repo's documented local-curl-testing workflow, verified both the
+  protected and unprotected states work correctly. The subscribe/
+  unsubscribe *menu itself* deliberately still needs no per-action code
+  — once the webhook is protected, a real USSD session's phone number is
+  asserted by the telecom carrier, not attacker-controlled.
+
+### Completed — medium severity
+- **`POST /api/admin/incidents/{id}/response` could message arbitrary
+  phone numbers** — an admin (including a self-registered one, before
+  the signup fix above) could pass any `recipients` array for
+  `sms`/`voice`, turning this into an open relay against the org's paid
+  Africa's Talking account. Fixed: `sms`/`voice` recipients are now
+  always resolved from `subscribers.json` for the report's own region;
+  caller-supplied `recipients` is only used for `radio`/`community_leader`
+  (freeform station/leader names, no paid API behind either).
+- **Photo uploads trusted the client's declared `Content-Type`**, not
+  the file's actual bytes — a non-image file labeled `image/jpeg` used
+  to pass. Fixed: `app/routes/hazard_reports.py` now sniffs real magic
+  bytes (JPEG/PNG/WebP signatures) and rejects anything else with a 415,
+  regardless of the declared type. Verified: an HTML file spoofed as
+  `image/jpeg` is now rejected; a real (tiny, hand-built) JPEG still
+  succeeds.
+- **CORS was wide open** (`allow_origins=["*"]`) with no way to tighten
+  it. Fixed: new `CORS_ALLOWED_ORIGINS` env var (comma-separated);
+  still defaults to `*` if unset, since the dashboard's deployed URL
+  isn't fixed yet, but now closeable without a code change.
+
+### Mobile app changes to match
+- `mobile-app/lib/services/subscriber_service.dart` rewritten: `enable`/
+  `disable` now take a `code` parameter, plus a new `requestCode()`
+  method matching the backend's two-step flow.
+- `alert_channels_screen.dart`: the SMS toggle (both directions) now
+  requests a code and shows a dialog prompting for it before completing
+  — pre-filled when the backend returns one directly (SMS not configured
+  server-side), otherwise blank since a real code only exists in the SMS
+  the user just received. Removed the old silent background
+  re-registration on screen-open (`_syncSmsRegistration`) — it can't
+  complete anymore without the user present to enter a code. SMS's
+  default toggle state changed from "on" to "off", since an unverified
+  "on" would now be misleading.
+- Added 6 new keys × 7 languages to `lib/l10n/app_*.arb` for the code
+  dialog (title, body with a `{phone}` placeholder, the simulated-code
+  testing note, hint, submit button, request-failed message).
+- `flutter analyze` and `flutter test` both pass clean after all of the
+  above.
+
+### Verification
+Every fix curl-tested end-to-end against a locally running server:
+admin signup rejected without/with-wrong `signup_code` then accepted
+with the right one; a revoked token correctly rejected on the next call;
+sensor readings rejected without/with-wrong `device_key` then accepted;
+the full request-code → register → re-use-same-code-fails →
+request-new-code → unsubscribe flow for `/api/subscribers`; USSD
+correctly open with no Basic Auth configured and correctly gated
+(401/401/200 for none/wrong/right credentials) once configured; an admin
+response's `recipients` field verified to reflect the real Maputo
+subscriber regardless of what phone number was passed in, and
+`"no_recipients"` for a region with none; the spoofed-Content-Type photo
+upload test. Mobile side verified via `flutter analyze`/`flutter test`
+(no live device/browser click-through this session — see the standing
+"Chrome extension not always connected" caveat from earlier sessions).
+
+### Not yet started
+- No rate limiting on login/signup/verify-code-request — brute-forcing a
+  password or a 6-digit code isn't prevented by anything at the
+  application layer (relies on network-level protection if any exists).
+  Deliberately out of scope for this pass (DoS/rate-limiting concerns
+  were explicitly excluded from the audit that drove this work).
+- `ADMIN_SIGNUP_CODE`/`USSD_WEBHOOK_USERNAME`/`PASSWORD`/
+  `CORS_ALLOWED_ORIGINS` are all unset in the actual deployed/demo
+  environment until someone sets them — this session only built the
+  mechanism and set local dev values in this machine's own gitignored
+  `.env`, not any shared/production one.
+- No live mobile device/browser click-through of the new SMS
+  verification dialog — verified via static analysis and backend-side
+  curl testing of the same API calls the mobile code makes, not an
+  actual tap-through.
+
+---
+
 ## 2026-09-07 — Admin Command Center API built, at Habiba's request
 
 Habiba asked (via Matthias) for a specific list of endpoints to connect

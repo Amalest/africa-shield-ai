@@ -38,6 +38,9 @@
   "lgaFieldHint": "Entrez votre collectivité locale",
   "cityFieldLabel": "Ville / Communauté",
   "cityFieldHint": "Entrez votre ville / communauté",
+  "phoneFieldLabel": "Numéro de téléphone",
+  "phoneFieldHint": "ex. +234 800 000 0000",
+  "phoneFieldNote": "Facultatif — nécessaire uniquement pour les alertes SMS, appel vocal ou USSD. Les notifications push n'en ont pas besoin.",
   "orDivider": "OU",
   "useMyCurrentLocation": "Utiliser ma position actuelle",
   "gpsCapturedNote": "Position GPS enregistrée : {lat}, {lon}. Il n'y a pas encore de recherche d'adresse automatique, merci de remplir votre état/LGA/ville ci-dessous.",
@@ -172,6 +175,22 @@
   "smsChannelTitle": "SMS",
   "smsChannelSubtitle": "Recevez les alertes par SMS même sans internet.",
   "smsRealNote": "Réel — envoyé via Africa's Talking.",
+  "smsNoPhoneYet": "Ajoutez d'abord un numéro de téléphone dans Paramètres > Localisation — les SMS ont besoin d'un numéro à qui envoyer.",
+  "smsNoRegionYet": "Aucune région surveillée pour vous pour l'instant, donc les SMS ne peuvent pas être configurés.",
+  "smsRegistrationFailed": "Impossible d'enregistrer votre numéro pour les alertes SMS — vérifiez votre connexion et réessayez.",
+  "smsEnabled": "Alertes SMS activées pour ce numéro.",
+  "smsDisabled": "Alertes SMS désactivées.",
+  "smsCodeRequestFailed": "Impossible de demander un code de vérification — vérifiez votre connexion et réessayez.",
+  "smsCodeDialogTitle": "Entrez le code de vérification",
+  "smsCodeDialogBody": "Nous avons envoyé un code à 6 chiffres au {phone}. Entrez-le ci-dessous pour continuer.",
+  "@smsCodeDialogBody": {
+    "placeholders": {
+      "phone": { "type": "String" }
+    }
+  },
+  "smsCodeSimulatedNote": "Les SMS ne sont pas configurés sur le serveur — ce code est affiché ici uniquement à des fins de test.",
+  "smsCodeHint": "Code à 6 chiffres",
+  "smsCodeSubmitButton": "Vérifier",
   "ussdChannelTitle": "USSD",
   "ussdChannelSubtitle": "Recevez les alertes sur un téléphone basique.",
   "ussdNote": "Mis en place, mais pas encore vérifié auprès d'un opérateur réel.",

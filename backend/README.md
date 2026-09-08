@@ -29,6 +29,42 @@ set, `push_status` in the alert log just says `"simulated"` instead of
 actually calling Firebase Cloud Messaging. Free to set up at
 https://console.firebase.google.com/ — see `app/models/push_gateway.py`.
 
+## Security fixes (2026-09-07)
+
+A security audit found 5 high-severity gaps, all now fixed — full detail
+in [`../docs/api-contract.md`](../docs/api-contract.md)'s status banner
+and each affected endpoint's section, and `docs/progress-log.md`'s
+2026-09-07 entry. Summary:
+
+- **Admin signup had no gate at all** — anyone could create a full admin
+  account. Fixed: `POST /api/admin/signup` now requires `signup_code`
+  matching `ADMIN_SIGNUP_CODE` in `.env` (disabled entirely, `503`, if
+  that's unset).
+- **`ADMIN_JWT_SECRET` fell back to a fixed, publicly-known value** —
+  forgeable by anyone who read this repo. Fixed: an unset one now
+  generates a real random secret per process start instead (sessions
+  just don't survive a restart without a persistent value). Added
+  `POST /api/admin/logout` to revoke a token immediately rather than
+  waiting out its 24h expiry.
+- **Sensor ingestion had no authentication** — the demo `device_id` is
+  published in this repo's own README, so anyone could spoof a reading
+  and trigger a real automatic alert. Fixed: `POST /api/sensor-reading`
+  now requires a per-device `device_key`.
+- **Subscribing/unsubscribing a phone number had no ownership check** —
+  anyone could add *or remove* any real number from real flood alerts.
+  Fixed: both now require a one-time code from the new
+  `POST /api/subscribers/verify/request`.
+- **The USSD webhook trusted a caller-supplied phone number with no
+  origin check.** Fixed: optional HTTP Basic Auth
+  (`USSD_WEBHOOK_USERNAME`/`PASSWORD`), off by default for the documented
+  local-testing workflow.
+- Also fixed two medium-severity gaps: the admin incident-response
+  endpoint could message arbitrary phone numbers (now always resolved
+  from the incident's own region's real subscribers), and photo uploads
+  trusted the client's declared `Content-Type` instead of the file's
+  actual bytes (now checked by magic-byte signature). And CORS is now
+  restrictable via `CORS_ALLOWED_ORIGINS` (still defaults to `*`).
+
 ## Run
 
 ```bash
@@ -63,9 +99,21 @@ shapes. Summary:
   Registers/unregisters a mobile device's FCM token against a region, so
   `POST /api/alerts/send` (manual or automatic) can push to it. See
   `app/routes/push_tokens.py`.
+- `POST /api/subscribers/verify/request` — real. Sends a one-time code to
+  a phone number (real SMS if configured, returned directly in the
+  response if not — never faked). Required before `POST`/`DELETE
+  /api/subscribers` below will accept that number.
+- `POST /api/subscribers` / `DELETE /api/subscribers/{phone_number}` —
+  real. Registers/unregisters a phone number for SMS/voice alerts for a
+  region — the smartphone-app equivalent of the USSD "Subscribe" menu.
+  **Both require a fresh code from the endpoint above** (added
+  2026-09-07 — previously neither had any ownership check at all, so
+  anyone could subscribe *or unsubscribe* any real phone number just by
+  knowing it). See `app/routes/subscribers.py`.
 - `POST /api/ussd` — real. Africa's Talking USSD webhook: check a
   region's risk, or subscribe/unsubscribe a phone number, no smartphone
-  needed. See `app/routes/ussd.py`.
+  needed. Optional HTTP Basic Auth (`USSD_WEBHOOK_USERNAME`/`PASSWORD`)
+  as of 2026-09-07 — see "Security fixes" below. See `app/routes/ussd.py`.
 - `POST /api/voice/callback` — real. Africa's Talking Voice webhook,
   called when a `channel: "voice"` alert is answered; responds with the
   queued alert text as speech. See `app/routes/voice.py`.
@@ -87,12 +135,14 @@ shapes. Summary:
   underlying function, same input validation, identical response shape.
   **Also auto-sends a real SMS** the first time this pushes the region
   into `"high"` (not on every reading while it stays high) — see
-  "Automatic alerts" below. See `app/routes/sensors.py` and
-  `../hardware/wokwi-flood-sensor/`.
-- `POST /api/admin/signup` / `POST /api/admin/login` / `GET /api/admin/me`
-  — real. Admin Command Center authentication: bcrypt-hashed passwords,
-  signed JWT bearer tokens (24h lifetime). See "Admin Command Center API"
-  below.
+  "Automatic alerts" below. **Requires `device_key`** (per-device, in
+  `devices.json`) as of 2026-09-07 — see "Security fixes" below. See
+  `app/routes/sensors.py` and `../hardware/wokwi-flood-sensor/`.
+- `POST /api/admin/signup` (**requires a shared `ADMIN_SIGNUP_CODE`** as
+  of 2026-09-07) / `POST /api/admin/login` / `GET /api/admin/me` /
+  `POST /api/admin/logout` — real. Admin Command Center authentication:
+  bcrypt-hashed passwords, signed JWT bearer tokens (24h lifetime,
+  revocable via logout). See "Admin Command Center API" below.
 - `GET /api/admin/dashboard/stats`, `GET /api/admin/incidents/prioritized`,
   `GET /api/admin/incidents/map`, `PATCH /api/admin/incidents/{id}/status`,
   `POST /api/admin/incidents/{id}/verify`,
@@ -162,8 +212,12 @@ shapes. Summary:
   `"channel": "voice"` uses this path instead of SMS.
 - `app/data/subscribers.json` is the shared recipient list (used by both
   SMS and voice) — `{"phone_number": ..., "location_name": ...}` pairs.
-  Starts empty; add entries by hand for testing, or use the USSD
-  subscribe flow below.
+  Starts empty; add entries by hand for testing, or use
+  `POST /api/subscribers` (needs a verification code first, see
+  `POST /api/subscribers/verify/request` — added 2026-09-07 so nobody can
+  subscribe or unsubscribe a number that isn't theirs) or the USSD
+  subscribe flow below (no code needed there — a real USSD session's
+  phone number is asserted by the carrier, not the caller).
 - To test USSD or voice without a real telecom, use Africa's Talking's
   sandbox simulators, pointed at your locally running server's
   `/api/ussd` or `/api/voice/callback` (needs a public URL — e.g.

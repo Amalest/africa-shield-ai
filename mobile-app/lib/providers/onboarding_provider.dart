@@ -13,6 +13,7 @@ class OnboardingProvider extends ChangeNotifier {
   static const _cityKey = 'onboarding_city_v1';
   static const _latitudeKey = 'onboarding_latitude_v1';
   static const _longitudeKey = 'onboarding_longitude_v1';
+  static const _phoneNumberKey = 'onboarding_phone_number_v1';
 
   bool isComplete = false;
   String language = 'English';
@@ -22,6 +23,7 @@ class OnboardingProvider extends ChangeNotifier {
   String? city;
   double? latitude;
   double? longitude;
+  String? phoneNumber;
 
   Future<void> load() async {
     final prefs = await SharedPreferences.getInstance();
@@ -33,6 +35,7 @@ class OnboardingProvider extends ChangeNotifier {
     city = prefs.getString(_cityKey);
     latitude = prefs.getDouble(_latitudeKey);
     longitude = prefs.getDouble(_longitudeKey);
+    phoneNumber = prefs.getString(_phoneNumberKey);
     notifyListeners();
   }
 
@@ -50,6 +53,7 @@ class OnboardingProvider extends ChangeNotifier {
     String? city,
     double? latitude,
     double? longitude,
+    String? phoneNumber,
   }) async {
     this.country = country;
     this.stateRegion = stateRegion;
@@ -57,6 +61,7 @@ class OnboardingProvider extends ChangeNotifier {
     this.city = city;
     this.latitude = latitude;
     this.longitude = longitude;
+    this.phoneNumber = phoneNumber;
     isComplete = true;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_countryKey, country);
@@ -65,6 +70,7 @@ class OnboardingProvider extends ChangeNotifier {
     if (city != null) await prefs.setString(_cityKey, city);
     if (latitude != null) await prefs.setDouble(_latitudeKey, latitude);
     if (longitude != null) await prefs.setDouble(_longitudeKey, longitude);
+    if (phoneNumber != null) await prefs.setString(_phoneNumberKey, phoneNumber);
     await prefs.setBool(_completeKey, true);
     notifyListeners();
   }

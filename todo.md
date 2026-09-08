@@ -93,6 +93,27 @@ Presentation & Pitch 5.
       `docs/progress-log.md`'s 2026-09-07 entry. **Not done yet: the
       frontend dashboard isn't wired to any of it** — that's the next
       step, on Habiba's side.
+- [x] **Security audit + fixes (2026-09-07, later same day): 5 high +
+      3 medium severity gaps found and closed.** Admin signup previously
+      had no gate (fixed: shared `ADMIN_SIGNUP_CODE` required);
+      `ADMIN_JWT_SECRET` had a fixed, public fallback (fixed: real random
+      secret per process start + token revocation/logout); sensor
+      ingestion had no auth (fixed: per-device `device_key`); subscribing
+      *and unsubscribing* a phone number had zero ownership check (fixed:
+      one-time SMS verification code, `POST /api/subscribers/verify/request`);
+      the USSD webhook trusted any caller (fixed: optional HTTP Basic
+      Auth). Plus: the admin response endpoint could message arbitrary
+      numbers (fixed: real subscribers only), photo uploads trusted a
+      spoofable `Content-Type` header (fixed: real magic-byte check), and
+      CORS is now restrictable (`CORS_ALLOWED_ORIGINS`). Mobile app's SMS
+      toggle updated to match the new verification flow. All verified via
+      curl + `flutter analyze`/`test`. See `docs/progress-log.md`'s
+      2026-09-07 (later) entry for full detail. **Not done:** rate
+      limiting on login/signup/verify-code (deliberately out of scope);
+      `ADMIN_SIGNUP_CODE`/`USSD_WEBHOOK_USERNAME`/`PASSWORD`/
+      `CORS_ALLOWED_ORIGINS` still need setting in the actual demo
+      deployment's `.env`, not just this machine's local one; no live
+      mobile device click-through of the new code-entry dialog.
 - [ ] Frontend cleanup (left to the frontend team, doesn't block the demo
       but worth doing before judging):
   - [ ] Move the hardcoded `http://localhost:8000` API URL (duplicated in

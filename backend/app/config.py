@@ -6,6 +6,7 @@ environment variables (e.g. set by CI or a hosting platform) always take
 precedence over anything in `.env`.
 """
 import os
+import secrets
 
 from dotenv import load_dotenv
 
@@ -24,9 +25,34 @@ FIREBASE_SERVICE_ACCOUNT_JSON = os.environ.get("FIREBASE_SERVICE_ACCOUNT_JSON")
 
 # Signs/verifies admin JWT session tokens (see app/auth.py). Unlike the
 # vars above, auth can't "simulate" without a secret — it always needs
-# one to function at all. Falls back to a fixed, publicly-known demo
-# value so the admin API works out of the box for the hackathon; anyone
-# deploying this for real MUST set a real secret in .env, or every admin
-# session token is forgeable. app/auth.py prints a warning at import time
-# if this default is still in use.
-ADMIN_JWT_SECRET = os.environ.get("ADMIN_JWT_SECRET", "afrishield-hackathon-demo-secret-change-me")
+# one to function at all, but a *wrong* default here is worse than no
+# default: a fixed, publicly-known secret (the old behavior) lets anyone
+# who has read this repo's source forge a valid admin token. Instead,
+# generate a real random secret once per process start if `.env` doesn't
+# set one. Cost: admin sessions don't survive a server restart (everyone
+# has to log in again) — a usability tradeoff, not a security one; set a
+# real persistent value in `.env` to avoid it, not because the generated
+# one is weak.
+ADMIN_JWT_SECRET = os.environ.get("ADMIN_JWT_SECRET") or secrets.token_hex(32)
+_ADMIN_JWT_SECRET_IS_EPHEMERAL = not os.environ.get("ADMIN_JWT_SECRET")
+
+# Shared invite code required by POST /api/admin/signup. Signup is
+# disabled entirely (503) until this is set — the safe default for an
+# admin console is "nobody can create an account", not "anyone can". Give
+# this value to teammates directly (Slack/etc.), never commit it.
+ADMIN_SIGNUP_CODE = os.environ.get("ADMIN_SIGNUP_CODE")
+
+# HTTP Basic Auth credentials for POST /api/ussd (Africa's Talking lets
+# you embed user:pass@ directly in a webhook URL). Optional — matches the
+# rest of this file's "real when configured" pattern; unset means the
+# webhook stays open, which is fine for the documented local curl-testing
+# workflow but should be set before pointing a real USSD channel at this
+# publicly.
+USSD_WEBHOOK_USERNAME = os.environ.get("USSD_WEBHOOK_USERNAME")
+USSD_WEBHOOK_PASSWORD = os.environ.get("USSD_WEBHOOK_PASSWORD")
+
+# Comma-separated list of allowed browser origins for CORS (e.g.
+# "https://afrishield-dashboard.example.com,http://localhost:5173").
+# Defaults to "*" (any origin) for local development if unset — see the
+# startup warning in app/main.py.
+CORS_ALLOWED_ORIGINS = os.environ.get("CORS_ALLOWED_ORIGINS")

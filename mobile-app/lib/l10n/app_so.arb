@@ -38,6 +38,9 @@
   "lgaFieldHint": "Geli dawladdaada hoose",
   "cityFieldLabel": "Magaalada / Bulshada",
   "cityFieldHint": "Geli magaaladaada / bulshadaada",
+  "phoneFieldLabel": "Lambarka Taleefanka",
+  "phoneFieldHint": "tusaale +234 800 000 0000",
+  "phoneFieldNote": "Ikhtiyaari — waxaa loo baahan yahay oo keliya digniinaha SMS, wicitaanka codka, ama USSD. Ogeysiisyada push looma baahna.",
   "orDivider": "AMA",
   "useMyCurrentLocation": "Isticmaal goobtayda hadda",
   "gpsCapturedNote": "GPS waa la qabtay: {lat}, {lon}. Weli lama helin baaris cinwaan, fadlan si toos ah u buuxi gobolka/LGA/magaalada hoos ku qoran.",
@@ -172,6 +175,22 @@
   "smsChannelTitle": "SMS",
   "smsChannelSubtitle": "Hel digniinaha SMS xitaa haddii aanad haysan internet.",
   "smsRealNote": "Dhab ah — waxaa loo diraa Africa's Talking.",
+  "smsNoPhoneYet": "Marka hore ku dar lambar taleefan Settings > Location — SMS wuxuu u baahan yahay lambar loo diro.",
+  "smsNoRegionYet": "Weli ma jirto gobol lagu la socdo adiga, marka SMS lama dejin karo.",
+  "smsRegistrationFailed": "Lama diiwaan gelin karin lambarkaaga digniinaha SMS — hubi xiriirkaaga oo isku day mar kale.",
+  "smsEnabled": "Digniinaha SMS waa la shiday lambarkan.",
+  "smsDisabled": "Digniinaha SMS waa la damiyay.",
+  "smsCodeRequestFailed": "Lama codsan karin koodhka xaqiijinta — hubi xiriirkaaga oo isku day mar kale.",
+  "smsCodeDialogTitle": "Geli koodhka xaqiijinta",
+  "smsCodeDialogBody": "Waxaan u dirnay koodh 6 lambar ah {phone}. Geli hoos si aad u sii socoto.",
+  "@smsCodeDialogBody": {
+    "placeholders": {
+      "phone": { "type": "String" }
+    }
+  },
+  "smsCodeSimulatedNote": "SMS lama dejin server-ka — koodhkan waxaa lagu tusayaa halkan tijaabo ahaan oo keliya.",
+  "smsCodeHint": "Koodh 6 lambar ah",
+  "smsCodeSubmitButton": "Xaqiiji",
   "ussdChannelTitle": "USSD",
   "ussdChannelSubtitle": "Hel digniinaha taleefanada caadiga ah.",
   "ussdNote": "Waa la dhisay, laakiin weli lama xaqiijin shabakad dhab ah.",

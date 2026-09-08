@@ -1,3 +1,4 @@
+import hmac
 import json
 from pathlib import Path
 
@@ -14,6 +15,7 @@ DEVICES_FILE = Path(__file__).resolve().parent.parent / "data" / "devices.json"
 
 class SensorReadingRequest(BaseModel):
     device_id: str
+    device_key: str
     rainfall_mm_24h: float = Field(allow_inf_nan=False)
     river_level_m: float = Field(allow_inf_nan=False)
     timestamp: str
@@ -32,6 +34,15 @@ def sensor_reading(payload: SensorReadingRequest) -> RiskCheckResponse:
     pattern as `subscribers.json`: seed by hand, since there's no device
     provisioning flow yet). 404s if `device_id` isn't registered, rather
     than guessing a location.
+
+    **Requires `device_key`** matching that device's `device_key` in
+    `devices.json` (401 if it doesn't match). Without this, `device_id`
+    alone was enough to submit a reading — and the demo device's id
+    (`esp32-demo-01`) is published in this repo's own README, so anyone
+    could have spoofed a reading and triggered a real automatic alert.
+    The key is a long random string, not a password an operator needs to
+    remember — generate one with `python -c "import secrets;
+    print(secrets.token_hex(16))"` for each new device.
 
     `rainfall_mm_24h`/`river_level_m` reuse the exact same
     `allow_inf_nan=False` field constraint `RiskCheckRequest` uses, so a
@@ -59,6 +70,8 @@ def sensor_reading(payload: SensorReadingRequest) -> RiskCheckResponse:
     device = next((d for d in devices if d["device_id"] == payload.device_id), None)
     if device is None:
         raise HTTPException(status_code=404, detail=f"Unknown device_id: {payload.device_id}")
+    if not hmac.compare_digest(payload.device_key, device.get("device_key", "")):
+        raise HTTPException(status_code=401, detail="Invalid device_key for this device_id")
 
     response = build_risk_check_response(
         device["location_name"],

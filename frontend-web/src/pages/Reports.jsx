@@ -1,11 +1,12 @@
 import {
-  AlertTriangle,
   Accessibility,
+  AlertTriangle,
   BellRing,
   CheckCircle2,
   ChevronRight,
   ClipboardList,
   Globe2,
+  Image,
   Languages,
   MapPin,
   Radio,
@@ -17,13 +18,25 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-const API_URL = "http://localhost:8000/api/regions";
+const REGIONS_API_URL = "http://localhost:8000/api/regions";
+const REPORTS_API_URL = "http://localhost:8000/api/hazard-reports";
 
 function Reports() {
+  // ============================================================
+  // REGIONAL DATA
+  // ============================================================
+
   const [regions, setRegions] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(false);
+  const [loadingRegions, setLoadingRegions] = useState(true);
+  const [regionError, setRegionError] = useState("");
+
+  // ============================================================
+  // FORM STATE
+  // ============================================================
+
+  const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
+  const [submitError, setSubmitError] = useState("");
 
   const [form, setForm] = useState({
     region: "",
@@ -33,43 +46,95 @@ function Reports() {
     description: "",
   });
 
+  // ============================================================
+  // PHOTO STATE
+  // ============================================================
+
+  const [selectedPhoto, setSelectedPhoto] = useState(null);
+  const [photoPreview, setPhotoPreview] = useState("");
+  const [photoError, setPhotoError] = useState("");
+
+  // ============================================================
+  // LOCATION STATE
+  // ============================================================
+
+  const [location, setLocation] = useState({
+    latitude: null,
+    longitude: null,
+  });
+
+  const [locationStatus, setLocationStatus] = useState("idle");
+  const [locationError, setLocationError] = useState("");
+
+  // ============================================================
+  // FETCH REGIONS
+  // ============================================================
+
   const fetchRegions = useCallback(async () => {
     try {
-      setLoading(true);
-      setError(false);
+      setLoadingRegions(true);
+      setRegionError("");
 
-      const response = await fetch(API_URL);
+      const response = await fetch(REGIONS_API_URL);
 
       if (!response.ok) {
-        throw new Error("Failed to fetch regional data");
+        throw new Error(
+          `Regional API returned status ${response.status}`
+        );
       }
 
       const data = await response.json();
 
       setRegions(Array.isArray(data) ? data : []);
-    } catch (err) {
-      console.error("Error fetching regional data:", err);
-      setError(true);
+    } catch (error) {
+      console.error("Error fetching regional data:", error);
+
+      setRegionError(
+        error.message || "Unable to load regional data."
+      );
     } finally {
-      setLoading(false);
+      setLoadingRegions(false);
     }
   }, []);
+
+  // ============================================================
+  // LOAD REGIONAL DATA WHEN PAGE OPENS
+  // ============================================================
 
   useEffect(() => {
     fetchRegions();
   }, [fetchRegions]);
 
+  // ============================================================
+  // CLEAN UP PHOTO PREVIEW URL
+  // ============================================================
+
+  useEffect(() => {
+    return () => {
+      if (photoPreview) {
+        URL.revokeObjectURL(photoPreview);
+      }
+    };
+  }, [photoPreview]);
+
+  // ============================================================
+  // RISK SUMMARY
+  // ============================================================
+
   const riskSummary = useMemo(() => {
     const high = regions.filter(
-      (region) => region.risk_level?.toLowerCase() === "high"
+      (region) =>
+        region.risk_level?.toLowerCase() === "high"
     ).length;
 
     const medium = regions.filter(
-      (region) => region.risk_level?.toLowerCase() === "medium"
+      (region) =>
+        region.risk_level?.toLowerCase() === "medium"
     ).length;
 
     const low = regions.filter(
-      (region) => region.risk_level?.toLowerCase() === "low"
+      (region) =>
+        region.risk_level?.toLowerCase() === "low"
     ).length;
 
     return {
@@ -80,50 +145,76 @@ function Reports() {
     };
   }, [regions]);
 
+  // ============================================================
+  // HIGH-RISK REGIONS
+  // ============================================================
+
   const highRiskRegions = useMemo(() => {
     return regions
       .filter(
-        (region) => region.risk_level?.toLowerCase() === "high"
+        (region) =>
+          region.risk_level?.toLowerCase() === "high"
       )
       .sort((a, b) => {
-        const scoreA =
+        const scoreA = Number(
           a.risk_score ??
-          a.risk_score_breakdown?.risk_score ??
-          0;
+            a.risk_score_breakdown?.risk_score ??
+            0
+        );
 
-        const scoreB =
+        const scoreB = Number(
           b.risk_score ??
-          b.risk_score_breakdown?.risk_score ??
-          0;
+            b.risk_score_breakdown?.risk_score ??
+            0
+        );
 
         return scoreB - scoreA;
       });
   }, [regions]);
+
+  // ============================================================
+  // HELPER: REGION NAME
+  // ============================================================
 
   const getRegionName = (locationName, country) => {
     if (!locationName) {
       return "Unknown region";
     }
 
-    if (country && locationName.endsWith(`, ${country}`)) {
+    if (
+      country &&
+      locationName.endsWith(`, ${country}`)
+    ) {
       return locationName.replace(`, ${country}`, "");
     }
 
     return locationName.split(",")[0].trim();
   };
 
+  // ============================================================
+  // HELPER: RISK SCORE
+  // ============================================================
+
   const getRiskScore = (region) => {
-    const score =
+    const rawScore =
       region.risk_score ??
       region.risk_score_breakdown?.risk_score ??
       0;
 
-    if (typeof score !== "number") {
+    const score = Number(rawScore);
+
+    if (Number.isNaN(score)) {
       return 0;
     }
 
-    return score <= 1 ? Math.round(score * 100) : Math.round(score);
+    return score <= 1
+      ? Math.round(score * 100)
+      : Math.round(score);
   };
+
+  // ============================================================
+  // FORM CHANGE
+  // ============================================================
 
   const handleChange = (event) => {
     const { name, value } = event.target;
@@ -134,30 +225,408 @@ function Reports() {
     }));
 
     setSubmitted(false);
+    setSubmitError("");
   };
 
-  const handleSubmit = (event) => {
+  // ============================================================
+  // GET CURRENT LOCATION
+  // ============================================================
+
+  const getCurrentLocation = () => {
+    setLocationError("");
+    setLocationStatus("locating");
+    setSubmitted(false);
+    setSubmitError("");
+
+    if (!navigator.geolocation) {
+      setLocationStatus("error");
+      setLocationError(
+        "Location services are not supported by this browser. You can still submit the report without GPS coordinates."
+      );
+      return;
+    }
+
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        const latitude = position.coords.latitude;
+        const longitude = position.coords.longitude;
+
+        setLocation({
+          latitude,
+          longitude,
+        });
+
+        setLocationStatus("success");
+        setLocationError("");
+
+        console.log("Community location captured:", {
+          latitude,
+          longitude,
+        });
+      },
+      (error) => {
+        console.error(
+          "Unable to get community location:",
+          error
+        );
+
+        setLocationStatus("error");
+
+        switch (error.code) {
+          case error.PERMISSION_DENIED:
+            setLocationError(
+              "Location permission was denied. You can still submit the report without GPS coordinates."
+            );
+            break;
+
+          case error.POSITION_UNAVAILABLE:
+            setLocationError(
+              "Your current location could not be determined. You can still submit the report without GPS coordinates."
+            );
+            break;
+
+          case error.TIMEOUT:
+            setLocationError(
+              "Location request timed out. Please try again."
+            );
+            break;
+
+          default:
+            setLocationError(
+              "Unable to determine your location. You can still submit the report without GPS coordinates."
+            );
+        }
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 15000,
+        maximumAge: 60000,
+      }
+    );
+  };
+
+  // ============================================================
+  // PHOTO CHANGE
+  // ============================================================
+
+  const handlePhotoChange = (event) => {
+    const file = event.target.files?.[0] || null;
+
+    setPhotoError("");
+    setSubmitError("");
+    setSubmitted(false);
+
+    if (!file) {
+      setSelectedPhoto(null);
+      setPhotoPreview("");
+      return;
+    }
+
+    // Backend maximum: 8 MB
+    if (file.size > 8 * 1024 * 1024) {
+      setSelectedPhoto(null);
+      setPhotoPreview("");
+      setPhotoError("Photo must be smaller than 8 MB.");
+      event.target.value = "";
+      return;
+    }
+
+    // Backend-supported image types
+    const allowedTypes = [
+      "image/jpeg",
+      "image/png",
+      "image/webp",
+    ];
+
+    if (!allowedTypes.includes(file.type)) {
+      setSelectedPhoto(null);
+      setPhotoPreview("");
+      setPhotoError(
+        "Please upload a JPEG, PNG, or WebP image."
+      );
+      event.target.value = "";
+      return;
+    }
+
+    setSelectedPhoto(file);
+
+    const previewUrl = URL.createObjectURL(file);
+    setPhotoPreview(previewUrl);
+  };
+
+  // ============================================================
+  // REMOVE SELECTED PHOTO
+  // ============================================================
+
+  const removeSelectedPhoto = () => {
+    setSelectedPhoto(null);
+    setPhotoPreview("");
+    setPhotoError("");
+
+    const photoInput =
+      document.getElementById("hazardPhoto");
+
+    if (photoInput) {
+      photoInput.value = "";
+    }
+  };
+
+  // ============================================================
+  // SUBMIT COMMUNITY REPORT
+  // ============================================================
+
+  const handleSubmit = async (event) => {
     event.preventDefault();
 
-    /*
-      The current backend exposes regional monitoring data.
-      A community-report POST endpoint is not currently available.
+    setSubmitting(true);
+    setSubmitted(false);
+    setSubmitError("");
 
-      For now, this validates the reporting workflow in the frontend.
-      Once the backend endpoint is available, this handler can be
-      connected without redesigning the page.
-    */
+    try {
+      // --------------------------------------------------------
+      // VALIDATION
+      // --------------------------------------------------------
 
-    setSubmitted(true);
+      if (!form.region) {
+        throw new Error(
+          "Please select an affected region."
+        );
+      }
+
+      if (!form.incidentType) {
+        throw new Error(
+          "Please select an incident type."
+        );
+      }
+
+      if (!form.severity) {
+        throw new Error(
+          "Please select the severity."
+        );
+      }
+
+      if (!form.description.trim()) {
+        throw new Error(
+          "Please describe what is happening."
+        );
+      }
+
+      // --------------------------------------------------------
+      // BUILD DESCRIPTION
+      // --------------------------------------------------------
+
+      const reportDescription = [
+        form.description.trim(),
+        `Severity: ${form.severity}`,
+        form.peopleAffected
+          ? `Estimated people affected: ${form.peopleAffected}`
+          : null,
+      ]
+        .filter(Boolean)
+        .join("\n\n");
+
+      // --------------------------------------------------------
+      // ASSISTANCE FLAG
+      // --------------------------------------------------------
+
+      const needsAssistance =
+        form.severity === "Critical" ||
+        form.incidentType === "Evacuation needed";
+
+      // --------------------------------------------------------
+      // BACKEND PAYLOAD
+      // --------------------------------------------------------
+
+      const payload = {
+        category: form.incidentType,
+        description: reportDescription,
+        location_name: form.region,
+        needs_assistance: needsAssistance,
+
+        // Send real GPS coordinates when available.
+        // Otherwise keep them null so the report can
+        // still be submitted without location services.
+        latitude: location.latitude,
+        longitude: location.longitude,
+      };
+
+      console.log(
+        "Submitting hazard report:",
+        payload
+      );
+
+      // --------------------------------------------------------
+      // CREATE REPORT
+      // --------------------------------------------------------
+
+      const response = await fetch(
+        REPORTS_API_URL,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(payload),
+        }
+      );
+
+      // --------------------------------------------------------
+      // READ RESPONSE
+      // --------------------------------------------------------
+
+      let responseData = null;
+
+      try {
+        responseData = await response.json();
+      } catch {
+        responseData = null;
+      }
+
+      // --------------------------------------------------------
+      // HANDLE REPORT ERROR
+      // --------------------------------------------------------
+
+      if (!response.ok) {
+        const backendMessage =
+          responseData?.detail ||
+          `Server returned status ${response.status}`;
+
+        if (Array.isArray(backendMessage)) {
+          throw new Error(
+            backendMessage
+              .map(
+                (item) =>
+                  item.msg || "Validation error"
+              )
+              .join(", ")
+          );
+        }
+
+        throw new Error(
+          String(backendMessage)
+        );
+      }
+
+      console.log(
+        "Hazard report created:",
+        responseData
+      );
+
+      // --------------------------------------------------------
+      // UPLOAD PHOTO
+      // --------------------------------------------------------
+
+      if (selectedPhoto && responseData?.id) {
+        const photoFormData = new FormData();
+
+        photoFormData.append(
+          "photo",
+          selectedPhoto
+        );
+
+        console.log(
+          "Uploading hazard report photo..."
+        );
+
+        const photoResponse = await fetch(
+          `${REPORTS_API_URL}/${responseData.id}/photo`,
+          {
+            method: "POST",
+            body: photoFormData,
+          }
+        );
+
+        let photoResponseData = null;
+
+        try {
+          photoResponseData =
+            await photoResponse.json();
+        } catch {
+          photoResponseData = null;
+        }
+
+        if (!photoResponse.ok) {
+          const photoBackendMessage =
+            photoResponseData?.detail ||
+            `Photo upload failed with status ${photoResponse.status}`;
+
+          throw new Error(
+            `Report was submitted, but the photo could not be uploaded: ${photoBackendMessage}`
+          );
+        }
+
+        console.log(
+          "Hazard report photo uploaded:",
+          photoResponseData
+        );
+      }
+
+      // ========================================================
+      // SUCCESS
+      // ========================================================
+
+      setSubmitted(true);
+
+      // Clear form
+      setForm({
+        region: "",
+        incidentType: "",
+        severity: "",
+        peopleAffected: "",
+        description: "",
+      });
+
+      // Clear location
+      setLocation({
+        latitude: null,
+        longitude: null,
+      });
+
+      setLocationStatus("idle");
+      setLocationError("");
+
+      // Clear photo
+      setSelectedPhoto(null);
+      setPhotoPreview("");
+      setPhotoError("");
+
+      const photoInput =
+        document.getElementById("hazardPhoto");
+
+      if (photoInput) {
+        photoInput.value = "";
+      }
+    } catch (error) {
+      console.error(
+        "Error submitting hazard report:",
+        error
+      );
+
+      setSubmitError(
+        error.message ||
+          "Report could not be submitted. Please make sure the FastAPI backend is running on port 8000."
+      );
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  // ============================================================
+  // REFRESH REGIONAL DATA
+  // ============================================================
+
+  const refreshAllData = async () => {
+    await fetchRegions();
   };
 
   return (
     <main className="min-h-full bg-slate-50/70 px-4 py-6 sm:px-6 lg:px-8">
       <section className="mx-auto max-w-7xl">
 
-        {/* =========================================================
+        {/* ======================================================
             PAGE HEADER
-        ========================================================= */}
+        ====================================================== */}
+
         <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
           <div>
             <div className="flex items-center gap-2">
@@ -173,28 +642,35 @@ function Reports() {
             </h1>
 
             <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-500">
-              Connect ground-level community information with AfriShield
-              flood intelligence to support faster, more inclusive response.
+              Connect ground-level community information
+              with AfriShield flood intelligence to support
+              faster, more inclusive response.
             </p>
           </div>
 
           <button
             type="button"
-            onClick={fetchRegions}
-            disabled={loading}
+            onClick={refreshAllData}
+            disabled={loadingRegions}
             className="inline-flex h-10 items-center justify-center gap-2 self-start rounded-xl border border-slate-200 bg-white px-4 text-xs font-bold text-slate-600 shadow-sm transition hover:border-blue-200 hover:bg-blue-50 hover:text-blue-600 disabled:cursor-not-allowed disabled:opacity-50 lg:self-auto"
           >
             <RefreshCw
               size={15}
-              className={loading ? "animate-spin" : ""}
+              className={
+                loadingRegions
+                  ? "animate-spin"
+                  : ""
+              }
             />
+
             Refresh data
           </button>
         </div>
 
-        {/* =========================================================
+        {/* ======================================================
             COMMUNITY IMPACT BANNER
-        ========================================================= */}
+        ====================================================== */}
+
         <div className="mt-7 overflow-hidden rounded-2xl bg-gradient-to-r from-blue-600 via-blue-600 to-indigo-600 p-6 text-white shadow-lg shadow-blue-100">
           <div className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
             <div className="max-w-3xl">
@@ -209,19 +685,22 @@ function Reports() {
               </div>
 
               <h2 className="mt-4 text-xl font-extrabold sm:text-2xl">
-                The community can become part of the warning system.
+                The community can become part of the
+                warning system.
               </h2>
 
               <p className="mt-2 max-w-2xl text-sm leading-6 text-blue-100">
-                AI and environmental monitoring can identify flood risk,
-                while people on the ground provide valuable information
-                about what is actually happening in their communities.
+                AI and environmental monitoring can identify
+                flood risk, while people on the ground provide
+                valuable information about what is actually
+                happening in their communities.
               </p>
             </div>
 
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:w-[420px]">
               <div className="rounded-xl bg-white/10 p-3 backdrop-blur">
                 <Radio size={17} />
+
                 <p className="mt-2 text-[10px] font-bold text-blue-100">
                   Radio
                 </p>
@@ -229,6 +708,7 @@ function Reports() {
 
               <div className="rounded-xl bg-white/10 p-3 backdrop-blur">
                 <BellRing size={17} />
+
                 <p className="mt-2 text-[10px] font-bold text-blue-100">
                   SMS
                 </p>
@@ -236,6 +716,7 @@ function Reports() {
 
               <div className="rounded-xl bg-white/10 p-3 backdrop-blur">
                 <Volume2 size={17} />
+
                 <p className="mt-2 text-[10px] font-bold text-blue-100">
                   Voice
                 </p>
@@ -243,6 +724,7 @@ function Reports() {
 
               <div className="rounded-xl bg-white/10 p-3 backdrop-blur">
                 <Users size={17} />
+
                 <p className="mt-2 text-[10px] font-bold text-blue-100">
                   Community
                 </p>
@@ -251,14 +733,16 @@ function Reports() {
           </div>
         </div>
 
-        {/* =========================================================
+        {/* ======================================================
             MAIN GRID
-        ========================================================= */}
+        ====================================================== */}
+
         <div className="mt-6 grid gap-6 xl:grid-cols-[1.35fr_0.65fr]">
 
-          {/* =======================================================
-              COMMUNITY REPORT FORM
-          ======================================================= */}
+          {/* ====================================================
+              REPORT FORM
+          ==================================================== */}
+
           <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
             <div className="border-b border-slate-100 px-6 py-5">
               <div className="flex items-start gap-3">
@@ -276,16 +760,19 @@ function Reports() {
                   </h2>
 
                   <p className="mt-1 text-xs leading-5 text-slate-400">
-                    Share information from the ground to support faster
-                    assessment and response.
+                    Share information from the ground to
+                    support faster assessment and response.
                   </p>
                 </div>
               </div>
             </div>
 
-            <form onSubmit={handleSubmit} className="space-y-5 p-6">
+            <form
+              onSubmit={handleSubmit}
+              className="space-y-5 p-6"
+            >
+              {/* REGION */}
 
-              {/* Region */}
               <div>
                 <label
                   htmlFor="region"
@@ -306,22 +793,25 @@ function Reports() {
                     Select a monitored region
                   </option>
 
-                  {regions.map((region, index) => (
-                    <option
-                      key={`${region.location_name}-${index}`}
-                      value={region.location_name}
-                    >
-                      {getRegionName(
-                        region.location_name,
-                        region.country
-                      )}{" "}
-                      — {region.country}
-                    </option>
-                  ))}
+                  {regions.map(
+                    (region, index) => (
+                      <option
+                        key={`${region.location_name}-${index}`}
+                        value={region.location_name}
+                      >
+                        {getRegionName(
+                          region.location_name,
+                          region.country
+                        )}{" "}
+                        — {region.country}
+                      </option>
+                    )
+                  )}
                 </select>
               </div>
 
-              {/* Incident + Severity */}
+              {/* INCIDENT + SEVERITY */}
+
               <div className="grid gap-5 sm:grid-cols-2">
                 <div>
                   <label
@@ -339,21 +829,33 @@ function Reports() {
                     required
                     className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none transition focus:border-blue-500 focus:ring-4 focus:ring-blue-50"
                   >
-                    <option value="">Select incident</option>
-                    <option value="Flooding">Flooding</option>
+                    <option value="">
+                      Select incident
+                    </option>
+
+                    <option value="Flooding">
+                      Flooding
+                    </option>
+
                     <option value="Rising water">
                       Rising water
                     </option>
+
                     <option value="Blocked road">
                       Blocked road
                     </option>
+
                     <option value="Damaged infrastructure">
                       Damaged infrastructure
                     </option>
+
                     <option value="Evacuation needed">
                       People need evacuation
                     </option>
-                    <option value="Other">Other</option>
+
+                    <option value="Other">
+                      Other
+                    </option>
                   </select>
                 </div>
 
@@ -376,15 +878,28 @@ function Reports() {
                     <option value="">
                       Select severity
                     </option>
-                    <option value="Low">Low</option>
-                    <option value="Medium">Medium</option>
-                    <option value="High">High</option>
-                    <option value="Critical">Critical</option>
+
+                    <option value="Low">
+                      Low
+                    </option>
+
+                    <option value="Medium">
+                      Medium
+                    </option>
+
+                    <option value="High">
+                      High
+                    </option>
+
+                    <option value="Critical">
+                      Critical
+                    </option>
                   </select>
                 </div>
               </div>
 
-              {/* People affected */}
+              {/* PEOPLE AFFECTED */}
+
               <div>
                 <label
                   htmlFor="peopleAffected"
@@ -405,7 +920,8 @@ function Reports() {
                 />
               </div>
 
-              {/* Description */}
+              {/* DESCRIPTION */}
+
               <div>
                 <label
                   htmlFor="description"
@@ -426,7 +942,231 @@ function Reports() {
                 />
               </div>
 
-              {/* Submit */}
+              {/* ==================================================
+                  LOCATION
+              ================================================== */}
+
+              <div>
+                <div className="mb-2 flex items-center justify-between gap-3">
+                  <label className="block text-xs font-bold text-slate-700">
+                    Incident location
+                    <span className="ml-1 font-normal text-slate-400">
+                      (recommended)
+                    </span>
+                  </label>
+
+                  {locationStatus === "success" && (
+                    <span className="flex items-center gap-1 text-[10px] font-bold text-emerald-600">
+                      <CheckCircle2 size={13} />
+                      Location captured
+                    </span>
+                  )}
+                </div>
+
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="flex items-start gap-3">
+                      <div
+                        className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${
+                          locationStatus === "success"
+                            ? "bg-emerald-50 text-emerald-600"
+                            : "bg-blue-50 text-blue-600"
+                        }`}
+                      >
+                        <MapPin size={18} />
+                      </div>
+
+                      <div>
+                        <p className="text-xs font-bold text-slate-700">
+                          Share your current location
+                        </p>
+
+                        <p className="mt-1 text-[10px] leading-5 text-slate-400">
+                          GPS coordinates help responders see
+                          the incident on the AfriShield
+                          command map.
+                        </p>
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={getCurrentLocation}
+                      disabled={
+                        submitting ||
+                        locationStatus === "locating"
+                      }
+                      className="inline-flex h-10 shrink-0 items-center justify-center gap-2 rounded-lg bg-white px-4 text-xs font-bold text-blue-600 shadow-sm ring-1 ring-slate-200 transition hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {locationStatus === "locating" ? (
+                        <>
+                          <RefreshCw
+                            size={14}
+                            className="animate-spin"
+                          />
+                          Getting location...
+                        </>
+                      ) : (
+                        <>
+                          <MapPin size={14} />
+                          {locationStatus === "success"
+                            ? "Update location"
+                            : "Use my location"}
+                        </>
+                      )}
+                    </button>
+                  </div>
+
+                  {/* COORDINATES */}
+
+                  {locationStatus === "success" && (
+                    <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                      <div className="rounded-lg border border-emerald-100 bg-white px-3 py-2">
+                        <p className="text-[9px] font-bold uppercase tracking-wide text-slate-400">
+                          Latitude
+                        </p>
+
+                        <p className="mt-1 text-xs font-extrabold text-slate-700">
+                          {location.latitude.toFixed(6)}
+                        </p>
+                      </div>
+
+                      <div className="rounded-lg border border-emerald-100 bg-white px-3 py-2">
+                        <p className="text-[9px] font-bold uppercase tracking-wide text-slate-400">
+                          Longitude
+                        </p>
+
+                        <p className="mt-1 text-xs font-extrabold text-slate-700">
+                          {location.longitude.toFixed(6)}
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* OPTIONAL LOCATION MESSAGE */}
+
+                  {locationStatus === "idle" && (
+                    <p className="mt-3 text-[10px] leading-5 text-slate-400">
+                      Location sharing is optional. You can
+                      still submit a report if GPS is
+                      unavailable.
+                    </p>
+                  )}
+
+                  {/* LOCATION ERROR */}
+
+                  {locationError && (
+                    <div className="mt-3 rounded-lg border border-amber-100 bg-amber-50 px-3 py-2">
+                      <p className="text-[10px] font-semibold leading-5 text-amber-700">
+                        {locationError}
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* ==================================================
+                  PHOTO UPLOAD
+              ================================================== */}
+
+              <div>
+                <label
+                  htmlFor="hazardPhoto"
+                  className="mb-2 block text-xs font-bold text-slate-700"
+                >
+                  Add a photo
+                  <span className="ml-1 font-normal text-slate-400">
+                    (optional)
+                  </span>
+                </label>
+
+                <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 p-4 transition hover:border-blue-400 hover:bg-blue-50/40">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white text-blue-600 shadow-sm">
+                        <Image size={18} />
+                      </div>
+
+                      <div>
+                        <p className="text-xs font-bold text-slate-700">
+                          Upload evidence
+                        </p>
+
+                        <p className="mt-1 text-[10px] text-slate-400">
+                          JPEG, PNG or WebP • Maximum 8 MB
+                        </p>
+                      </div>
+                    </div>
+
+                    <label
+                      htmlFor="hazardPhoto"
+                      className="inline-flex h-10 cursor-pointer items-center justify-center gap-2 rounded-lg bg-white px-4 text-xs font-bold text-blue-600 shadow-sm ring-1 ring-slate-200 transition hover:bg-blue-50"
+                    >
+                      <Image size={14} />
+                      Choose photo
+                    </label>
+
+                    <input
+                      id="hazardPhoto"
+                      name="hazardPhoto"
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp"
+                      onChange={handlePhotoChange}
+                      className="hidden"
+                    />
+                  </div>
+
+                  {/* PHOTO PREVIEW */}
+
+                  {selectedPhoto && photoPreview && (
+                    <div className="mt-4 overflow-hidden rounded-xl border border-slate-200 bg-white">
+                      <div className="relative">
+                        <img
+                          src={photoPreview}
+                          alt="Selected hazard evidence"
+                          className="max-h-72 w-full object-cover"
+                        />
+
+                        <button
+                          type="button"
+                          onClick={removeSelectedPhoto}
+                          disabled={submitting}
+                          className="absolute right-3 top-3 rounded-lg bg-black/70 px-3 py-1.5 text-[10px] font-bold text-white transition hover:bg-black disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          Remove
+                        </button>
+                      </div>
+
+                      <div className="flex items-center justify-between gap-3 p-3">
+                        <p className="min-w-0 truncate text-xs font-bold text-slate-700">
+                          {selectedPhoto.name}
+                        </p>
+
+                        <p className="shrink-0 text-[10px] text-slate-400">
+                          {(
+                            selectedPhoto.size /
+                            (1024 * 1024)
+                          ).toFixed(2)}{" "}
+                          MB
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* PHOTO ERROR */}
+
+                  {photoError && (
+                    <div className="mt-3 rounded-lg bg-red-50 px-3 py-2">
+                      <p className="text-[10px] font-semibold text-red-600">
+                        {photoError}
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* SUBMIT */}
+
               <div className="flex flex-col gap-4 border-t border-slate-100 pt-5 sm:flex-row sm:items-center sm:justify-between">
                 <div className="flex items-start gap-2 text-[10px] leading-5 text-slate-400">
                   <ShieldAlert
@@ -435,20 +1175,37 @@ function Reports() {
                   />
 
                   <span>
-                    Community information can complement automated
-                    flood monitoring and help identify situations
-                    requiring attention.
+                    Community information can complement
+                    automated flood monitoring and help
+                    identify situations requiring attention.
                   </span>
                 </div>
 
                 <button
                   type="submit"
-                  className="inline-flex h-11 shrink-0 items-center justify-center gap-2 rounded-xl bg-blue-600 px-5 text-xs font-extrabold text-white shadow-sm shadow-blue-200 transition hover:bg-blue-700 hover:shadow-md"
+                  disabled={submitting}
+                  className="inline-flex h-11 shrink-0 items-center justify-center gap-2 rounded-xl bg-blue-600 px-5 text-xs font-extrabold text-white shadow-sm shadow-blue-200 transition hover:bg-blue-700 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  <Send size={15} />
-                  Submit report
+                  {submitting ? (
+                    <>
+                      <RefreshCw
+                        size={15}
+                        className="animate-spin"
+                      />
+
+                      Submitting...
+                    </>
+                  ) : (
+                    <>
+                      <Send size={15} />
+
+                      Submit report
+                    </>
+                  )}
                 </button>
               </div>
+
+              {/* SUCCESS */}
 
               {submitted && (
                 <div className="flex items-start gap-3 rounded-xl border border-emerald-100 bg-emerald-50 p-4">
@@ -459,14 +1216,35 @@ function Reports() {
 
                   <div>
                     <p className="text-sm font-bold text-emerald-700">
-                      Report captured successfully
+                      Report submitted successfully
                     </p>
 
                     <p className="mt-1 text-xs leading-5 text-emerald-600">
-                      The reporting workflow is ready in the frontend.
-                      The next step is connecting it to a backend
-                      community-report endpoint for permanent storage
-                      and processing.
+                      Your hazard report has been received
+                      and sent to the response team for
+                      review. Thank you for helping protect
+                      your community.
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* ERROR */}
+
+              {submitError && (
+                <div className="flex items-start gap-3 rounded-xl border border-red-100 bg-red-50 p-4">
+                  <AlertTriangle
+                    size={18}
+                    className="mt-0.5 shrink-0 text-red-600"
+                  />
+
+                  <div>
+                    <p className="text-sm font-bold text-red-700">
+                      Report could not be submitted
+                    </p>
+
+                    <p className="mt-1 text-xs leading-5 text-red-600">
+                      {submitError}
                     </p>
                   </div>
                 </div>
@@ -474,9 +1252,10 @@ function Reports() {
             </form>
           </section>
 
-          {/* =======================================================
+          {/* ====================================================
               HIGH RISK REGIONS
-          ======================================================= */}
+          ==================================================== */}
+
           <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
             <div className="border-b border-slate-100 px-5 py-5">
               <p className="text-[10px] font-extrabold uppercase tracking-[1.4px] text-red-500">
@@ -488,12 +1267,12 @@ function Reports() {
               </h2>
 
               <p className="mt-1 text-xs leading-5 text-slate-400">
-                Current high-risk locations from the live monitoring
-                network.
+                Current high-risk locations from the live
+                monitoring network.
               </p>
             </div>
 
-            {loading && (
+            {loadingRegions && (
               <div className="flex min-h-[300px] items-center justify-center">
                 <RefreshCw
                   size={22}
@@ -502,7 +1281,7 @@ function Reports() {
               </div>
             )}
 
-            {!loading && error && (
+            {!loadingRegions && regionError && (
               <div className="flex min-h-[300px] flex-col items-center justify-center px-6 text-center">
                 <AlertTriangle
                   size={22}
@@ -523,76 +1302,80 @@ function Reports() {
               </div>
             )}
 
-            {!loading && !error && (
+            {!loadingRegions && !regionError && (
               <div className="divide-y divide-slate-100">
-                {highRiskRegions.map((region, index) => (
-                  <div
-                    key={`${region.location_name}-${index}`}
-                    className="p-5 transition hover:bg-slate-50"
-                  >
-                    <div className="flex items-start justify-between gap-4">
-                      <div className="flex min-w-0 items-start gap-3">
-                        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-red-50 text-red-500">
-                          <MapPin size={16} />
+                {highRiskRegions.map(
+                  (region, index) => (
+                    <div
+                      key={`${region.location_name}-${index}`}
+                      className="p-5 transition hover:bg-slate-50"
+                    >
+                      <div className="flex items-start justify-between gap-4">
+                        <div className="flex min-w-0 items-start gap-3">
+                          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-red-50 text-red-500">
+                            <MapPin size={16} />
+                          </div>
+
+                          <div className="min-w-0">
+                            <p className="truncate text-sm font-extrabold text-slate-800">
+                              {getRegionName(
+                                region.location_name,
+                                region.country
+                              )}
+                            </p>
+
+                            <p className="mt-0.5 text-[10px] text-slate-400">
+                              {region.country}
+                            </p>
+                          </div>
                         </div>
 
-                        <div className="min-w-0">
-                          <p className="truncate text-sm font-extrabold text-slate-800">
-                            {getRegionName(
-                              region.location_name,
-                              region.country
-                            )}
+                        <span className="rounded-full bg-red-50 px-2.5 py-1 text-[9px] font-extrabold uppercase text-red-600">
+                          HIGH
+                        </span>
+                      </div>
+
+                      <div className="mt-4 flex items-end justify-between">
+                        <div>
+                          <p className="text-[10px] font-semibold text-slate-400">
+                            Risk score
                           </p>
 
-                          <p className="mt-0.5 text-[10px] text-slate-400">
-                            {region.country}
+                          <p className="mt-1 text-xl font-extrabold text-slate-900">
+                            {getRiskScore(region)}
+
+                            <span className="ml-1 text-[10px] font-semibold text-slate-400">
+                              /100
+                            </span>
+                          </p>
+                        </div>
+
+                        <div className="text-right">
+                          <p className="text-[10px] font-semibold text-slate-400">
+                            Rainfall
+                          </p>
+
+                          <p className="mt-1 text-sm font-extrabold text-slate-700">
+                            {region.rainfall_mm_24h ?? 0}{" "}
+                            mm
                           </p>
                         </div>
                       </div>
 
-                      <span className="rounded-full bg-red-50 px-2.5 py-1 text-[9px] font-extrabold uppercase text-red-600">
-                        HIGH
-                      </span>
-                    </div>
-
-                    <div className="mt-4 flex items-end justify-between">
-                      <div>
-                        <p className="text-[10px] font-semibold text-slate-400">
-                          Risk score
-                        </p>
-
-                        <p className="mt-1 text-xl font-extrabold text-slate-900">
-                          {getRiskScore(region)}
-                          <span className="ml-1 text-[10px] font-semibold text-slate-400">
-                            /100
-                          </span>
-                        </p>
-                      </div>
-
-                      <div className="text-right">
-                        <p className="text-[10px] font-semibold text-slate-400">
-                          Rainfall
-                        </p>
-
-                        <p className="mt-1 text-sm font-extrabold text-slate-700">
-                          {region.rainfall_mm_24h ?? 0} mm
-                        </p>
+                      <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-slate-100">
+                        <div
+                          className="h-full rounded-full bg-red-500"
+                          style={{
+                            width: `${Math.min(
+                              getRiskScore(region),
+                              100
+                            )}%`,
+                          }}
+                        />
                       </div>
                     </div>
-
-                    <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-slate-100">
-                      <div
-                        className="h-full rounded-full bg-red-500"
-                        style={{
-                          width: `${Math.min(
-                            getRiskScore(region),
-                            100
-                          )}%`,
-                        }}
-                      />
-                    </div>
-                  </div>
-                ))}
+                  )
+                )}
 
                 {highRiskRegions.length === 0 && (
                   <div className="flex min-h-[250px] flex-col items-center justify-center px-6 text-center">
@@ -606,15 +1389,15 @@ function Reports() {
                     </p>
 
                     <p className="mt-1 text-xs text-slate-400">
-                      The monitored network currently has no regions
-                      classified as high risk.
+                      The monitored network currently has
+                      no regions classified as high risk.
                     </p>
                   </div>
                 )}
               </div>
             )}
 
-            {!loading && !error && (
+            {!loadingRegions && !regionError && (
               <div className="border-t border-slate-100 bg-slate-50/60 p-5">
                 <div className="grid grid-cols-3 gap-2">
                   <div className="rounded-xl bg-red-50 p-3 text-center">
@@ -652,9 +1435,10 @@ function Reports() {
           </section>
         </div>
 
-        {/* =========================================================
-            ACCESSIBILITY + COMMUNITY INCLUSION
-        ========================================================= */}
+        {/* ======================================================
+            ACCESSIBILITY
+        ====================================================== */}
+
         <section className="mt-6 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
           <div className="border-b border-slate-100 px-6 py-5">
             <div className="flex items-start gap-3">
@@ -672,16 +1456,16 @@ function Reports() {
                 </h2>
 
                 <p className="mt-1 max-w-3xl text-xs leading-5 text-slate-400">
-                  Flood warnings should remain useful for people who may
-                  have limited internet access, disabilities, language
-                  barriers, or limited access to smartphones.
+                  Flood warnings should remain useful for
+                  people who may have limited internet access,
+                  disabilities, language barriers, or limited
+                  access to smartphones.
                 </p>
               </div>
             </div>
           </div>
 
           <div className="grid gap-0 md:grid-cols-3">
-
             <div className="border-b border-slate-100 p-6 md:border-b-0 md:border-r">
               <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-50 text-blue-600">
                 <Volume2 size={18} />
@@ -692,8 +1476,9 @@ function Reports() {
               </h3>
 
               <p className="mt-2 text-xs leading-5 text-slate-400">
-                Voice alerts and audio communication can help people who
-                have difficulty reading text-based warnings.
+                Voice alerts and audio communication can help
+                people who have difficulty reading text-based
+                warnings.
               </p>
             </div>
 
@@ -707,9 +1492,9 @@ function Reports() {
               </h3>
 
               <p className="mt-2 text-xs leading-5 text-slate-400">
-                Alerts can be adapted into languages understood by local
-                communities instead of relying only on technical or
-                national-level messaging.
+                Alerts can be adapted into languages understood
+                by local communities instead of relying only
+                on technical or national-level messaging.
               </p>
             </div>
 
@@ -723,17 +1508,19 @@ function Reports() {
               </h3>
 
               <p className="mt-2 text-xs leading-5 text-slate-400">
-                Community leaders, local responders, radio networks and
-                other trusted channels can help reach people who are
-                difficult to reach through digital platforms.
+                Community leaders, local responders, radio
+                networks and other trusted channels can help
+                reach people who are difficult to reach through
+                digital platforms.
               </p>
             </div>
           </div>
         </section>
 
-        {/* =========================================================
+        {/* ======================================================
             DETECTION TO COMMUNITY WARNING
-        ========================================================= */}
+        ====================================================== */}
+
         <section className="mt-6 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
           <div className="border-b border-slate-100 px-6 py-5">
             <p className="text-[10px] font-extrabold uppercase tracking-[1.4px] text-blue-600">
@@ -745,9 +1532,9 @@ function Reports() {
             </h2>
 
             <p className="mt-1 max-w-2xl text-xs leading-5 text-slate-400">
-              AfriShield connects automated intelligence with information
-              from people on the ground and multiple communication
-              pathways.
+              AfriShield connects automated intelligence
+              with information from people on the ground and
+              multiple communication pathways.
             </p>
           </div>
 
@@ -805,16 +1592,19 @@ function Reports() {
           </div>
         </section>
 
-        {/* =========================================================
-            FOOTER NOTE
-        ========================================================= */}
+        {/* ======================================================
+            FOOTER
+        ====================================================== */}
+
         <div className="flex flex-col gap-2 px-1 py-6 text-[10px] text-slate-400 sm:flex-row sm:items-center sm:justify-between">
           <span>
-            AfriShield Community Response • Live regional intelligence
+            AfriShield Community Response • Live regional
+            intelligence
           </span>
 
           <span className="flex items-center gap-1.5 font-semibold text-emerald-600">
             <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" />
+
             Monitoring network active
           </span>
         </div>

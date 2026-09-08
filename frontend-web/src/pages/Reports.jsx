@@ -55,6 +55,18 @@ function Reports() {
   const [photoError, setPhotoError] = useState("");
 
   // ============================================================
+  // LOCATION STATE
+  // ============================================================
+
+  const [location, setLocation] = useState({
+    latitude: null,
+    longitude: null,
+  });
+
+  const [locationStatus, setLocationStatus] = useState("idle");
+  const [locationError, setLocationError] = useState("");
+
+  // ============================================================
   // FETCH REGIONS
   // ============================================================
 
@@ -217,6 +229,83 @@ function Reports() {
   };
 
   // ============================================================
+  // GET CURRENT LOCATION
+  // ============================================================
+
+  const getCurrentLocation = () => {
+    setLocationError("");
+    setLocationStatus("locating");
+    setSubmitted(false);
+    setSubmitError("");
+
+    if (!navigator.geolocation) {
+      setLocationStatus("error");
+      setLocationError(
+        "Location services are not supported by this browser. You can still submit the report without GPS coordinates."
+      );
+      return;
+    }
+
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        const latitude = position.coords.latitude;
+        const longitude = position.coords.longitude;
+
+        setLocation({
+          latitude,
+          longitude,
+        });
+
+        setLocationStatus("success");
+        setLocationError("");
+
+        console.log("Community location captured:", {
+          latitude,
+          longitude,
+        });
+      },
+      (error) => {
+        console.error(
+          "Unable to get community location:",
+          error
+        );
+
+        setLocationStatus("error");
+
+        switch (error.code) {
+          case error.PERMISSION_DENIED:
+            setLocationError(
+              "Location permission was denied. You can still submit the report without GPS coordinates."
+            );
+            break;
+
+          case error.POSITION_UNAVAILABLE:
+            setLocationError(
+              "Your current location could not be determined. You can still submit the report without GPS coordinates."
+            );
+            break;
+
+          case error.TIMEOUT:
+            setLocationError(
+              "Location request timed out. Please try again."
+            );
+            break;
+
+          default:
+            setLocationError(
+              "Unable to determine your location. You can still submit the report without GPS coordinates."
+            );
+        }
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 15000,
+        maximumAge: 60000,
+      }
+    );
+  };
+
+  // ============================================================
   // PHOTO CHANGE
   // ============================================================
 
@@ -353,8 +442,12 @@ function Reports() {
         description: reportDescription,
         location_name: form.region,
         needs_assistance: needsAssistance,
-        latitude: null,
-        longitude: null,
+
+        // Send real GPS coordinates when available.
+        // Otherwise keep them null so the report can
+        // still be submitted without location services.
+        latitude: location.latitude,
+        longitude: location.longitude,
       };
 
       console.log(
@@ -482,6 +575,15 @@ function Reports() {
         peopleAffected: "",
         description: "",
       });
+
+      // Clear location
+      setLocation({
+        latitude: null,
+        longitude: null,
+      });
+
+      setLocationStatus("idle");
+      setLocationError("");
 
       // Clear photo
       setSelectedPhoto(null);
@@ -838,6 +940,129 @@ function Reports() {
                   placeholder="Describe the situation, affected roads, rising water, people needing assistance, or other important information..."
                   className="w-full resize-none rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm leading-6 text-slate-700 outline-none transition placeholder:text-slate-300 focus:border-blue-500 focus:ring-4 focus:ring-blue-50"
                 />
+              </div>
+
+              {/* ==================================================
+                  LOCATION
+              ================================================== */}
+
+              <div>
+                <div className="mb-2 flex items-center justify-between gap-3">
+                  <label className="block text-xs font-bold text-slate-700">
+                    Incident location
+                    <span className="ml-1 font-normal text-slate-400">
+                      (recommended)
+                    </span>
+                  </label>
+
+                  {locationStatus === "success" && (
+                    <span className="flex items-center gap-1 text-[10px] font-bold text-emerald-600">
+                      <CheckCircle2 size={13} />
+                      Location captured
+                    </span>
+                  )}
+                </div>
+
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="flex items-start gap-3">
+                      <div
+                        className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${
+                          locationStatus === "success"
+                            ? "bg-emerald-50 text-emerald-600"
+                            : "bg-blue-50 text-blue-600"
+                        }`}
+                      >
+                        <MapPin size={18} />
+                      </div>
+
+                      <div>
+                        <p className="text-xs font-bold text-slate-700">
+                          Share your current location
+                        </p>
+
+                        <p className="mt-1 text-[10px] leading-5 text-slate-400">
+                          GPS coordinates help responders see
+                          the incident on the AfriShield
+                          command map.
+                        </p>
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={getCurrentLocation}
+                      disabled={
+                        submitting ||
+                        locationStatus === "locating"
+                      }
+                      className="inline-flex h-10 shrink-0 items-center justify-center gap-2 rounded-lg bg-white px-4 text-xs font-bold text-blue-600 shadow-sm ring-1 ring-slate-200 transition hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {locationStatus === "locating" ? (
+                        <>
+                          <RefreshCw
+                            size={14}
+                            className="animate-spin"
+                          />
+                          Getting location...
+                        </>
+                      ) : (
+                        <>
+                          <MapPin size={14} />
+                          {locationStatus === "success"
+                            ? "Update location"
+                            : "Use my location"}
+                        </>
+                      )}
+                    </button>
+                  </div>
+
+                  {/* COORDINATES */}
+
+                  {locationStatus === "success" && (
+                    <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                      <div className="rounded-lg border border-emerald-100 bg-white px-3 py-2">
+                        <p className="text-[9px] font-bold uppercase tracking-wide text-slate-400">
+                          Latitude
+                        </p>
+
+                        <p className="mt-1 text-xs font-extrabold text-slate-700">
+                          {location.latitude.toFixed(6)}
+                        </p>
+                      </div>
+
+                      <div className="rounded-lg border border-emerald-100 bg-white px-3 py-2">
+                        <p className="text-[9px] font-bold uppercase tracking-wide text-slate-400">
+                          Longitude
+                        </p>
+
+                        <p className="mt-1 text-xs font-extrabold text-slate-700">
+                          {location.longitude.toFixed(6)}
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* OPTIONAL LOCATION MESSAGE */}
+
+                  {locationStatus === "idle" && (
+                    <p className="mt-3 text-[10px] leading-5 text-slate-400">
+                      Location sharing is optional. You can
+                      still submit a report if GPS is
+                      unavailable.
+                    </p>
+                  )}
+
+                  {/* LOCATION ERROR */}
+
+                  {locationError && (
+                    <div className="mt-3 rounded-lg border border-amber-100 bg-amber-50 px-3 py-2">
+                      <p className="text-[10px] font-semibold leading-5 text-amber-700">
+                        {locationError}
+                      </p>
+                    </div>
+                  )}
+                </div>
               </div>
 
               {/* ==================================================

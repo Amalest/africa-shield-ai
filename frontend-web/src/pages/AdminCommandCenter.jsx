@@ -30,12 +30,28 @@ const REPORTS_API_URL =
 const REGIONS_API_URL =
   "http://localhost:8000/api/regions";
 
+const ADMIN_STATS_API_URL =
+  "http://localhost:8000/api/admin/dashboard/stats";
+
+const ADMIN_PRIORITY_API_URL =
+  "http://localhost:8000/api/admin/incidents/prioritized";
+
+const ADMIN_MAP_API_URL =
+  "http://localhost:8000/api/admin/incidents/map";
+
+const ADMIN_INCIDENTS_API_URL =
+  "http://localhost:8000/api/admin/incidents";
+
+const ADMIN_ASSISTANCE_API_URL =
+  "http://localhost:8000/api/admin/assistance-requests";
+
+
 /*
 |--------------------------------------------------------------------------
 | ADMIN COMMAND CENTER
 |--------------------------------------------------------------------------
 |
-| Frontend-first emergency operations center.
+| Live emergency operations center.
 |
 | Current live backend data:
 | - Community hazard reports
@@ -46,12 +62,13 @@ const REGIONS_API_URL =
 | - Submission time
 | - Regional flood risk
 |
-| Backend-ready areas:
-| - Verification persistence
+| Live backend integrations:
+| - Dashboard statistics
+| - AI incident prioritization
+| - Incident map
+| - Verification and status workflow
 | - Incident assignment
-| - Response sending
-| - Incident resolution
-| - AI/ML priority endpoint
+| - Last-mile response logging
 |
 |--------------------------------------------------------------------------
 */
@@ -62,6 +79,15 @@ function AdminCommandCenter() {
 
   const [loading, setLoading] = useState(true);
   const [regionsLoading, setRegionsLoading] = useState(true);
+  const [statsLoading, setStatsLoading] = useState(true);
+
+  const [dashboardStats, setDashboardStats] = useState({
+    total_reports: 0,
+    critical_or_high_priority: 0,
+    assistance_needed: 0,
+    resolved: 0,
+    by_status: {},
+  });
 
   const [error, setError] = useState("");
   const [regionsError, setRegionsError] = useState("");
@@ -84,7 +110,8 @@ function AdminCommandCenter() {
   /*
    * Frontend workflow state.
    *
-   * Later this can be replaced with backend persistence.
+   * Backend incident status and assignment now take precedence;
+   * local state is retained only for immediate UI continuity.
    */
   const [incidentStatuses, setIncidentStatuses] =
     useState({});
@@ -111,6 +138,30 @@ function AdminCommandCenter() {
 
   const [responseSent, setResponseSent] =
     useState(false);
+
+  const [priorityLoading, setPriorityLoading] =
+    useState(true);
+
+  const [priorityError, setPriorityError] =
+    useState("");
+
+  const [priorityIncidents, setPriorityIncidents] =
+    useState([]);
+
+  const [mapLoading, setMapLoading] =
+    useState(true);
+
+  const [mapError, setMapError] =
+    useState("");
+
+  const [mapIncidents, setMapIncidents] =
+    useState([]);
+
+  const [actionLoading, setActionLoading] =
+    useState(false);
+
+  const [actionError, setActionError] =
+    useState("");
 
   /*
    * ============================================================
@@ -196,6 +247,187 @@ function AdminCommandCenter() {
 
   /*
    * ============================================================
+   * FETCH DASHBOARD STATISTICS
+   * ============================================================
+   */
+
+  const fetchDashboardStats = useCallback(async () => {
+    try {
+      setStatsLoading(true);
+
+      const token = localStorage.getItem("afrishield_admin_token");
+
+      if (!token) {
+        throw new Error("Admin authentication token is missing.");
+      }
+
+      const response = await fetch(ADMIN_STATS_API_URL, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      const data = await response.json().catch(() => null);
+
+      if (!response.ok) {
+        if (response.status === 401) {
+          throw new Error(
+            "Your admin session has expired. Please log in again."
+          );
+        }
+
+        throw new Error(
+          data?.detail ||
+            `Dashboard statistics API returned status ${response.status}`
+        );
+      }
+
+      setDashboardStats({
+        total_reports: Number(data?.total_reports) || 0,
+        critical_or_high_priority:
+          Number(data?.critical_or_high_priority) || 0,
+        assistance_needed: Number(data?.assistance_needed) || 0,
+        resolved: Number(data?.resolved) || 0,
+        by_status: data?.by_status || {},
+      });
+    } catch (error) {
+      console.error(
+        "Error fetching admin dashboard statistics:",
+        error
+      );
+    } finally {
+      setStatsLoading(false);
+    }
+  }, []);
+
+  /*
+   * ============================================================
+   * FETCH AI PRIORITIZED INCIDENTS
+   * ============================================================
+   */
+
+  const fetchPrioritizedIncidents = useCallback(async () => {
+    try {
+      setPriorityLoading(true);
+      setPriorityError("");
+
+      const token = localStorage.getItem(
+        "afrishield_admin_token"
+      );
+
+      if (!token) {
+        throw new Error(
+          "Admin authentication token is missing."
+        );
+      }
+
+      const response = await fetch(
+        ADMIN_PRIORITY_API_URL,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        }
+      );
+
+      const data = await response.json().catch(() => null);
+
+      if (!response.ok) {
+        if (response.status === 401) {
+          throw new Error(
+            "Your admin session has expired. Please log in again."
+          );
+        }
+
+        throw new Error(
+          data?.detail ||
+            `AI priority API returned status ${response.status}`
+        );
+      }
+
+      setPriorityIncidents(
+        Array.isArray(data) ? data : []
+      );
+    } catch (error) {
+      console.error(
+        "Error fetching AI-prioritized incidents:",
+        error
+      );
+
+      setPriorityError(
+        error.message ||
+          "Unable to load AI priority intelligence."
+      );
+    } finally {
+      setPriorityLoading(false);
+    }
+  }, []);
+
+  /*
+   * ============================================================
+   * FETCH ADMIN INCIDENT MAP
+   * ============================================================
+   */
+
+  const fetchMapIncidents = useCallback(async () => {
+    try {
+      setMapLoading(true);
+      setMapError("");
+
+      const token = localStorage.getItem(
+        "afrishield_admin_token"
+      );
+
+      if (!token) {
+        throw new Error(
+          "Admin authentication token is missing."
+        );
+      }
+
+      const response = await fetch(
+        ADMIN_MAP_API_URL,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        }
+      );
+
+      const data = await response.json().catch(() => null);
+
+      if (!response.ok) {
+        if (response.status === 401) {
+          throw new Error(
+            "Your admin session has expired. Please log in again."
+          );
+        }
+
+        throw new Error(
+          data?.detail ||
+            `Incident map API returned status ${response.status}`
+        );
+      }
+
+      setMapIncidents(
+        Array.isArray(data) ? data : []
+      );
+    } catch (error) {
+      console.error(
+        "Error fetching incident map:",
+        error
+      );
+
+      setMapError(
+        error.message ||
+          "Unable to load incident map intelligence."
+      );
+    } finally {
+      setMapLoading(false);
+    }
+  }, []);
+
+  /*
+   * ============================================================
    * INITIAL LOAD
    * ============================================================
    */
@@ -203,7 +435,16 @@ function AdminCommandCenter() {
   useEffect(() => {
     fetchReports();
     fetchRegions();
-  }, [fetchReports, fetchRegions]);
+    fetchDashboardStats();
+    fetchPrioritizedIncidents();
+    fetchMapIncidents();
+  }, [
+    fetchReports,
+    fetchRegions,
+    fetchDashboardStats,
+    fetchPrioritizedIncidents,
+    fetchMapIncidents,
+  ]);
 
   /*
    * ============================================================
@@ -333,7 +574,8 @@ function AdminCommandCenter() {
    * AI-ASSISTED PRIORITY / TRIAGE
    * ============================================================
    *
-   * This is intentionally transparent frontend logic.
+   * This remains as a safe fallback if the backend AI triage
+   * endpoint is temporarily unavailable.
    *
    * Maximum score = 100
    *
@@ -516,6 +758,71 @@ function AdminCommandCenter() {
     }
   };
 
+  const priorityByReportId = useMemo(() => {
+    return priorityIncidents.reduce(
+      (accumulator, incident) => {
+        if (incident?.id) {
+          accumulator[incident.id] = incident;
+        }
+
+        return accumulator;
+      },
+      {}
+    );
+  }, [priorityIncidents]);
+
+  const getAIIncident = (report) =>
+    report?.id
+      ? priorityByReportId[report.id] || null
+      : null;
+
+  const getPriorityScoreForReport = (report) => {
+    const aiIncident = getAIIncident(report);
+    const backendScore = Number(
+      aiIncident?.priority_score
+    );
+
+    if (Number.isFinite(backendScore)) {
+      return Math.max(
+        0,
+        Math.min(100, Math.round(backendScore * 100))
+      );
+    }
+
+    return calculatePriority(report);
+  };
+
+  const getPriorityLevelForReport = (report) => {
+    const aiIncident = getAIIncident(report);
+
+    if (aiIncident?.priority_level) {
+      return (
+        String(aiIncident.priority_level).charAt(0).toUpperCase() +
+        String(aiIncident.priority_level).slice(1).toLowerCase()
+      );
+    }
+
+    return getPriorityLevel(
+      calculatePriority(report)
+    );
+  };
+
+  const formatFactorValue = (value) => {
+    if (value === null || value === undefined) {
+      return "Not available";
+    }
+
+    if (typeof value === "boolean") {
+      return value ? "Yes" : "No";
+    }
+
+    if (typeof value === "object") {
+      return JSON.stringify(value);
+    }
+
+    return String(value);
+  };
+
   /*
    * ============================================================
    * INCIDENT STATUS
@@ -523,45 +830,212 @@ function AdminCommandCenter() {
    */
 
   const getIncidentStatus = (report) => {
-    return (
-      incidentStatuses[report.id] ||
-      "NEW"
+    const localStatus = incidentStatuses[report.id];
+    const backendStatus = report.status;
+
+    if (localStatus) {
+      return String(localStatus).toUpperCase();
+    }
+
+    if (backendStatus) {
+      return String(backendStatus).toUpperCase();
+    }
+
+    return "NEW";
+  };
+
+  const getAssignedTeam = (report) =>
+    assignedTeams[report.id] ||
+    report.assigned_to ||
+    "";
+
+  const updateReportLocally = (updatedReport) => {
+    if (!updatedReport?.id) {
+      return;
+    }
+
+    setReports((previous) =>
+      previous.map((report) =>
+        report.id === updatedReport.id
+          ? updatedReport
+          : report
+      )
+    );
+
+    setSelectedReport((previous) =>
+      previous?.id === updatedReport.id
+        ? updatedReport
+        : previous
     );
   };
 
-  const setIncidentStatus = (
+  const runAdminAction = async (request) => {
+    try {
+      setActionLoading(true);
+      setActionError("");
+
+      const token = localStorage.getItem(
+        "afrishield_admin_token"
+      );
+
+      if (!token) {
+        throw new Error(
+          "Admin authentication token is missing."
+        );
+      }
+
+      const response = await fetch(request.url, {
+        method: request.method || "GET",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          ...(request.body
+            ? { "Content-Type": "application/json" }
+            : {}),
+        },
+        ...(request.body
+          ? { body: JSON.stringify(request.body) }
+          : {}),
+      });
+
+      const data = await response.json().catch(() => null);
+
+      if (!response.ok) {
+        if (response.status === 401) {
+          throw new Error(
+            "Your admin session has expired. Please log in again."
+          );
+        }
+
+        throw new Error(
+          data?.detail ||
+            `Admin action failed with status ${response.status}`
+        );
+      }
+
+      return data;
+    } catch (error) {
+      console.error("Admin action error:", error);
+      setActionError(
+        error.message ||
+          "The requested admin action could not be completed."
+      );
+      return null;
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const setIncidentStatus = async (
     reportId,
     status
   ) => {
-    setIncidentStatuses(
-      (previous) => ({
-        ...previous,
-        [reportId]: status,
-      })
-    );
+    const backendStatus = String(status).toLowerCase();
+
+    const updatedReport = await runAdminAction({
+      url: `${ADMIN_INCIDENTS_API_URL}/${reportId}/status`,
+      method: "PATCH",
+      body: { status: backendStatus },
+    });
+
+    if (!updatedReport) {
+      return false;
+    }
+
+    updateReportLocally(updatedReport);
+    setIncidentStatuses((previous) => ({
+      ...previous,
+      [reportId]: String(
+        updatedReport.status || backendStatus
+      ).toUpperCase(),
+    }));
+
+    await Promise.all([
+      fetchDashboardStats(),
+      fetchPrioritizedIncidents(),
+      fetchMapIncidents(),
+    ]);
+
+    return true;
   };
 
-  /*
-   * ============================================================
-   * ASSIGN RESPONSE TEAM
-   * ============================================================
-   */
+  const verifyIncident = async (
+    reportId,
+    verified,
+    notes = ""
+  ) => {
+    const updatedReport = await runAdminAction({
+      url: `${ADMIN_INCIDENTS_API_URL}/${reportId}/verify`,
+      method: "POST",
+      body: {
+        verified,
+        notes,
+      },
+    });
 
-  const assignTeam = (
+    if (!updatedReport) {
+      return false;
+    }
+
+    updateReportLocally(updatedReport);
+    setIncidentStatuses((previous) => ({
+      ...previous,
+      [reportId]: String(
+        updatedReport.status ||
+          (verified ? "verifying" : "new")
+      ).toUpperCase(),
+    }));
+
+    await Promise.all([
+      fetchDashboardStats(),
+      fetchPrioritizedIncidents(),
+      fetchMapIncidents(),
+    ]);
+
+    return true;
+  };
+
+  const assignTeam = async (
     reportId,
     team
   ) => {
-    setAssignedTeams(
-      (previous) => ({
-        ...previous,
-        [reportId]: team,
-      })
-    );
+    if (!team) {
+      return false;
+    }
 
-    setIncidentStatus(
-      reportId,
-      "ASSIGNED"
-    );
+    const updatedReport = await runAdminAction({
+      url: `${ADMIN_ASSISTANCE_API_URL}/${reportId}/assign`,
+      method: "POST",
+      body: {
+        assigned_to: team,
+        team,
+        notes: "Assigned from AfriShield Admin Command Center.",
+      },
+    });
+
+    if (!updatedReport) {
+      return false;
+    }
+
+    updateReportLocally(updatedReport);
+    setAssignedTeams((previous) => ({
+      ...previous,
+      [reportId]:
+        updatedReport.assigned_to || team,
+    }));
+    setIncidentStatuses((previous) => ({
+      ...previous,
+      [reportId]: String(
+        updatedReport.status || "assigned"
+      ).toUpperCase(),
+    }));
+
+    await Promise.all([
+      fetchDashboardStats(),
+      fetchPrioritizedIncidents(),
+      fetchMapIncidents(),
+    ]);
+
+    return true;
   };
 
   /*
@@ -590,11 +1064,7 @@ function AdminCommandCenter() {
           priorityFilter !== "All"
         ) {
           const priority =
-            getPriorityLevel(
-              calculatePriority(
-                report
-              )
-            );
+            getPriorityLevelForReport(report);
 
           if (
             priority !==
@@ -620,8 +1090,8 @@ function AdminCommandCenter() {
       })
       .sort(
         (a, b) =>
-          calculatePriority(b) -
-          calculatePriority(a)
+          getPriorityScoreForReport(b) -
+          getPriorityScoreForReport(a)
       );
   }, [
     reports,
@@ -629,6 +1099,7 @@ function AdminCommandCenter() {
     severityFilter,
     priorityFilter,
     regions,
+    priorityIncidents,
   ]);
 
   /*
@@ -637,71 +1108,12 @@ function AdminCommandCenter() {
    * ============================================================
    */
 
-  const statistics = useMemo(() => {
-    const critical =
-      reports.filter(
-        (report) =>
-          getPriorityLevel(
-            calculatePriority(
-              report
-            )
-          ) === "Critical"
-      ).length;
-
-    const high =
-      reports.filter(
-        (report) =>
-          getPriorityLevel(
-            calculatePriority(
-              report
-            )
-          ) === "High"
-      ).length;
-
-    const assistance =
-      reports.filter(
-        (report) =>
-          report.needs_assistance
-      ).length;
-
-    const verified =
-      reports.filter(
-        (report) =>
-          getIncidentStatus(
-            report
-          ) === "VERIFIED"
-      ).length;
-
-    const assigned =
-      reports.filter(
-        (report) =>
-          getIncidentStatus(
-            report
-          ) === "ASSIGNED"
-      ).length;
-
-    const resolved =
-      reports.filter(
-        (report) =>
-          getIncidentStatus(
-            report
-          ) === "RESOLVED"
-      ).length;
-
-    return {
-      total: reports.length,
-      critical,
-      high,
-      assistance,
-      verified,
-      assigned,
-      resolved,
-    };
-  }, [
-    reports,
-    incidentStatuses,
-    regions,
-  ]);
+  const statistics = {
+    total: dashboardStats.total_reports,
+    critical: dashboardStats.critical_or_high_priority,
+    assistance: dashboardStats.assistance_needed,
+    resolved: dashboardStats.resolved,
+  };
 
   /*
    * ============================================================
@@ -718,10 +1130,10 @@ function AdminCommandCenter() {
         )
         .sort(
           (a, b) =>
-            calculatePriority(b) -
-            calculatePriority(a)
+            getPriorityScoreForReport(b) -
+            getPriorityScoreForReport(a)
         );
-    }, [reports, regions]);
+    }, [reports, regions, priorityIncidents]);
 
   /*
    * ============================================================
@@ -730,16 +1142,30 @@ function AdminCommandCenter() {
    */
 
   const mapReports = useMemo(() => {
-    return reports.filter(
-      (report) =>
-        Number.isFinite(
-          Number(report.latitude)
-        ) &&
-        Number.isFinite(
-          Number(report.longitude)
-        )
-    );
-  }, [reports]);
+    return mapIncidents
+      .map((incident) => {
+        const fullReport = reports.find(
+          (report) => report.id === incident.id
+        );
+
+        return fullReport
+          ? {
+              ...fullReport,
+              latitude: incident.latitude,
+              longitude: incident.longitude,
+              map_priority_score: incident.priority_score,
+              map_priority_level: incident.priority_level,
+              map_severity: incident.severity,
+              map_status: incident.status,
+            }
+          : incident;
+      })
+      .filter(
+        (report) =>
+          Number.isFinite(Number(report.latitude)) &&
+          Number.isFinite(Number(report.longitude))
+      );
+  }, [mapIncidents, reports]);
 
   /*
    * ============================================================
@@ -749,17 +1175,18 @@ function AdminCommandCenter() {
 
   const selectedPriority =
     selectedReport
-      ? calculatePriority(
-          selectedReport
-        )
+      ? getPriorityScoreForReport(selectedReport)
       : 0;
 
   const selectedPriorityLevel =
     selectedReport
-      ? getPriorityLevel(
-          selectedPriority
-        )
+      ? getPriorityLevelForReport(selectedReport)
       : "Low";
+
+  const selectedAIIncident =
+    selectedReport
+      ? getAIIncident(selectedReport)
+      : null;
 
   const handleChannelToggle = (
     channel
@@ -775,24 +1202,71 @@ function AdminCommandCenter() {
     setResponseSent(false);
   };
 
-  const handleSendResponse = () => {
-    if (!responseMessage.trim()) {
+  const getResponseRecipients = (report) => {
+    const possible =
+      report?.phone_number ||
+      report?.phone ||
+      report?.contact_phone ||
+      report?.recipient_phone;
+
+    if (Array.isArray(possible)) {
+      return possible.filter(Boolean);
+    }
+
+    if (possible) {
+      return [String(possible)];
+    }
+
+    return [];
+  };
+
+  const handleSendResponse = async () => {
+    if (!selectedReport || !responseMessage.trim()) {
       return;
     }
 
-    /*
-     * Frontend demonstration state.
-     *
-     * Later replace this with the backend
-     * notification endpoint.
-     */
-    setResponseSent(true);
+    const selectedChannels = [
+      responseChannels.sms ? "sms" : null,
+      responseChannels.voice ? "voice" : null,
+      responseChannels.radio ? "radio" : null,
+      responseChannels.community
+        ? "community_leader"
+        : null,
+    ].filter(Boolean);
 
-    if (selectedReport) {
-      setIncidentStatus(
-        selectedReport.id,
-        "RESPONDING"
-      );
+    if (selectedChannels.length === 0) {
+      return;
+    }
+
+    let completed = false;
+
+    for (const channel of selectedChannels) {
+      const result = await runAdminAction({
+        url: `${ADMIN_INCIDENTS_API_URL}/${selectedReport.id}/response`,
+        method: "POST",
+        body: {
+          channel,
+          message: responseMessage.trim(),
+          recipients: getResponseRecipients(
+            selectedReport
+          ),
+        },
+      });
+
+      if (result) {
+        completed = true;
+      }
+    }
+
+    if (completed) {
+      setResponseSent(true);
+
+      await Promise.all([
+        fetchReports(),
+        fetchDashboardStats(),
+        fetchPrioritizedIncidents(),
+        fetchMapIncidents(),
+      ]);
     }
   };
 
@@ -828,6 +1302,9 @@ function AdminCommandCenter() {
     await Promise.all([
       fetchReports(),
       fetchRegions(),
+      fetchDashboardStats(),
+      fetchPrioritizedIncidents(),
+      fetchMapIncidents(),
     ]);
   };
 
@@ -874,7 +1351,10 @@ function AdminCommandCenter() {
             }
             disabled={
               loading ||
-              regionsLoading
+              regionsLoading ||
+              statsLoading ||
+              priorityLoading ||
+              mapLoading
             }
             className="inline-flex h-10 items-center justify-center gap-2 self-start rounded-xl border border-slate-200 bg-white px-4 text-xs font-bold text-slate-600 shadow-sm transition hover:border-blue-200 hover:bg-blue-50 hover:text-blue-600 disabled:cursor-not-allowed disabled:opacity-50 lg:self-auto"
           >
@@ -882,7 +1362,10 @@ function AdminCommandCenter() {
               size={15}
               className={
                 loading ||
-                regionsLoading
+                regionsLoading ||
+                statsLoading ||
+                priorityLoading ||
+                mapLoading
                   ? "animate-spin"
                   : ""
               }
@@ -905,6 +1388,16 @@ function AdminCommandCenter() {
           <StatusPill
             label="REGIONAL INTELLIGENCE"
             active={!regionsError}
+          />
+
+          <StatusPill
+            label="AI TRIAGE"
+            active={!priorityError}
+          />
+
+          <StatusPill
+            label="INCIDENT MAP"
+            active={!mapError}
           />
 
           <StatusPill
@@ -994,7 +1487,7 @@ function AdminCommandCenter() {
                 size={21}
               />
             }
-            label="Critical Priority"
+            label="High/Critical Priority"
             value={statistics.critical}
             iconStyle="bg-red-50 text-red-600"
           />
@@ -1267,6 +1760,27 @@ function AdminCommandCenter() {
               </div>
             )}
 
+            {/* AI PRIORITY STATUS */}
+
+            {priorityLoading && !loading && (
+              <div className="border-b border-blue-100 bg-blue-50 px-6 py-3">
+                <div className="flex items-center gap-2 text-blue-700">
+                  <RefreshCw size={13} className="animate-spin" />
+                  <p className="text-[10px] font-extrabold">
+                    Loading backend AI triage scores and explainable priority factors...
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {priorityError && !priorityLoading && (
+              <div className="border-b border-amber-100 bg-amber-50 px-6 py-3">
+                <p className="text-[10px] font-extrabold text-amber-700">
+                  AI triage unavailable — using local fallback scoring until the backend responds.
+                </p>
+              </div>
+            )}
+
             {/* LOADING */}
 
             {loading && (
@@ -1317,13 +1831,13 @@ function AdminCommandCenter() {
                   {filteredReports.map(
                     (report) => {
                       const score =
-                        calculatePriority(
+                        getPriorityScoreForReport(
                           report
                         );
 
                       const priority =
-                        getPriorityLevel(
-                          score
+                        getPriorityLevelForReport(
+                          report
                         );
 
                       const styles =
@@ -1535,6 +2049,11 @@ function AdminCommandCenter() {
             getPriorityLevel={
               getPriorityLevel
             }
+            getPriorityLevelForReport={
+              getPriorityLevelForReport
+            }
+            mapLoading={mapLoading}
+            mapError={mapError}
           />
         )}
 
@@ -1592,10 +2111,8 @@ function AdminCommandCenter() {
                 value={
                   assistanceReports.filter(
                     (report) =>
-                      getPriorityLevel(
-                        calculatePriority(
-                          report
-                        )
+                      getPriorityLevelForReport(
+                        report
                       ) ===
                       "Critical"
                   ).length
@@ -1647,19 +2164,17 @@ function AdminCommandCenter() {
               {assistanceReports.map(
                 (report) => {
                   const score =
-                    calculatePriority(
+                    getPriorityScoreForReport(
                       report
                     );
 
                   const priority =
-                    getPriorityLevel(
-                      score
+                    getPriorityLevelForReport(
+                      report
                     );
 
                   const team =
-                    assignedTeams[
-                      report.id
-                    ];
+                    getAssignedTeam(report);
 
                   return (
                     <div
@@ -2109,6 +2624,50 @@ function AdminCommandCenter() {
 
                 </div>
 
+                {/* AI PRIORITY EXPLANATION */}
+
+                <div className="rounded-xl border border-red-100 bg-red-50 p-4">
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <p className="text-[9px] font-extrabold uppercase tracking-wide text-red-600">
+                        AI TRIAGE EXPLANATION
+                      </p>
+                      <p className="mt-1 text-sm font-extrabold text-red-900">
+                        {selectedPriorityLevel} priority · {selectedPriority}/100
+                      </p>
+                    </div>
+                    {priorityLoading && (
+                      <RefreshCw size={14} className="animate-spin text-red-500" />
+                    )}
+                  </div>
+
+                  {selectedAIIncident?.factors && (
+                    <div className="mt-3 space-y-2">
+                      {Object.entries(selectedAIIncident.factors).map(
+                        ([factor, value]) => (
+                          <div
+                            key={factor}
+                            className="rounded-lg bg-white/80 px-3 py-2"
+                          >
+                            <p className="text-[9px] font-extrabold uppercase tracking-wide text-slate-500">
+                              {factor.replace(/_/g, " ")}
+                            </p>
+                            <p className="mt-0.5 text-[10px] leading-5 text-slate-600">
+                              {formatFactorValue(value)}
+                            </p>
+                          </div>
+                        )
+                      )}
+                    </div>
+                  )}
+
+                  {!selectedAIIncident && (
+                    <p className="mt-2 text-[10px] leading-5 text-red-700">
+                      AI priority details are still loading. The command center will use the backend triage result when available.
+                    </p>
+                  )}
+                </div>
+
                 {/* REGIONAL INTELLIGENCE */}
 
                 <div className="rounded-xl border border-blue-100 bg-blue-50 p-4">
@@ -2186,6 +2745,17 @@ function AdminCommandCenter() {
 
               <div className="border-t border-slate-100 bg-slate-50/60 p-6 lg:border-l lg:border-t-0">
 
+                {actionError && (
+                  <div className="mb-5 rounded-xl border border-red-100 bg-red-50 p-4">
+                    <p className="text-[10px] font-extrabold text-red-700">
+                      COMMAND ACTION FAILED
+                    </p>
+                    <p className="mt-1 text-[10px] leading-5 text-red-600">
+                      {actionError}
+                    </p>
+                  </div>
+                )}
+
                 {/* STATUS */}
 
                 <div>
@@ -2213,8 +2783,7 @@ function AdminCommandCenter() {
                       onChange={(event) =>
                         setIncidentStatus(
                           selectedReport.id,
-                          event.target
-                            .value
+                          event.target.value
                         )
                       }
                       className="mt-3 h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-xs font-bold text-slate-600 outline-none focus:border-blue-500"
@@ -2223,8 +2792,8 @@ function AdminCommandCenter() {
                         New
                       </option>
 
-                      <option value="VERIFIED">
-                        Verified
+                      <option value="VERIFYING">
+                        Verifying
                       </option>
 
                       <option value="PRIORITIZED">
@@ -2257,9 +2826,10 @@ function AdminCommandCenter() {
                     <button
                       type="button"
                       onClick={() => {
-                        setIncidentStatus(
+                        verifyIncident(
                           selectedReport.id,
-                          "VERIFIED"
+                          true,
+                          "Evidence reviewed by admin."
                         );
                       }}
                       className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-emerald-600 px-4 text-[10px] font-extrabold text-white hover:bg-emerald-700"
@@ -2273,9 +2843,10 @@ function AdminCommandCenter() {
                     <button
                       type="button"
                       onClick={() => {
-                        setIncidentStatus(
+                        verifyIncident(
                           selectedReport.id,
-                          "NEW"
+                          false,
+                          "Flagged for further human review."
                         );
                       }}
                       className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-4 text-[10px] font-extrabold text-slate-600 hover:bg-slate-50"
@@ -2296,9 +2867,9 @@ function AdminCommandCenter() {
 
                     <select
                       value={
-                        assignedTeams[
-                          selectedReport.id
-                        ] || ""
+                        getAssignedTeam(
+                          selectedReport
+                        )
                       }
                       onChange={(event) => {
                         if (
@@ -2520,6 +3091,9 @@ function IncidentMap({
   onOpenReport,
   calculatePriority,
   getPriorityLevel,
+  getPriorityLevelForReport,
+  mapLoading,
+  mapError,
 }) {
   /*
    * This is a lightweight frontend map visualization.
@@ -2550,6 +3124,19 @@ function IncidentMap({
               Geographic incidents with available coordinates
               are highlighted for operational awareness.
             </p>
+
+            {mapLoading && (
+              <div className="mt-3 inline-flex items-center gap-2 rounded-lg bg-blue-50 px-3 py-2 text-[9px] font-extrabold text-blue-600">
+                <RefreshCw size={12} className="animate-spin" />
+                Syncing live incident map...
+              </div>
+            )}
+
+            {mapError && (
+              <div className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-[9px] font-bold leading-4 text-amber-700">
+                {mapError}
+              </div>
+            )}
           </div>
 
           <div className="rounded-xl bg-blue-50 px-4 py-3">
@@ -2609,21 +3196,24 @@ function IncidentMap({
 
           {reports.map(
             (report, index) => {
+              const backendMapScore =
+                Number(report.map_priority_score);
+
               const score =
-                calculatePriority(
-                  report
-                );
+                Number.isFinite(backendMapScore)
+                  ? Math.round(backendMapScore * 100)
+                  : calculatePriority(report);
 
               const level =
-                getPriorityLevel(
-                  score
-                );
+                report.map_priority_level
+                  ? String(report.map_priority_level).charAt(0).toUpperCase() +
+                    String(report.map_priority_level).slice(1).toLowerCase()
+                  : getPriorityLevel(score);
 
               const position =
-                getMarkerPosition(
+                getGeoMarkerPosition(
                   report,
-                  index,
-                  reports.length
+                  reports
                 );
 
               return (
@@ -2747,10 +3337,8 @@ function IncidentMap({
               value={
                 allReports.filter(
                   (report) =>
-                    getPriorityLevel(
-                      calculatePriority(
-                        report
-                      )
+                    getPriorityLevelForReport(
+                      report
                     ) ===
                     "Critical"
                 ).length
@@ -2792,10 +3380,9 @@ function IncidentMap({
               />
 
               <p className="text-[10px] leading-5 text-blue-700">
-                The backend already supports latitude and
-                longitude fields. Once the reporting form
-                supplies coordinates, incidents can be plotted
-                precisely.
+                The live admin map endpoint returns only incidents
+                with real latitude and longitude fixes, so the map
+                stays operationally honest and never invents locations.
               </p>
             </div>
           </div>
@@ -3498,6 +4085,45 @@ function AccessibilityIcon() {
 | the incident queue.
 |
 */
+
+function getGeoMarkerPosition(report, reports) {
+  const coordinates = reports
+    .map((item) => ({
+      latitude: Number(item.latitude),
+      longitude: Number(item.longitude),
+    }))
+    .filter(
+      (item) =>
+        Number.isFinite(item.latitude) &&
+        Number.isFinite(item.longitude)
+    );
+
+  if (!coordinates.length) {
+    return { x: 50, y: 50 };
+  }
+
+  const latitudes = coordinates.map((item) => item.latitude);
+  const longitudes = coordinates.map((item) => item.longitude);
+
+  const minLat = Math.min(...latitudes);
+  const maxLat = Math.max(...latitudes);
+  const minLon = Math.min(...longitudes);
+  const maxLon = Math.max(...longitudes);
+
+  const latRange = maxLat - minLat || 1;
+  const lonRange = maxLon - minLon || 1;
+
+  const latitude = Number(report.latitude);
+  const longitude = Number(report.longitude);
+
+  const x = 8 + ((longitude - minLon) / lonRange) * 84;
+  const y = 88 - ((latitude - minLat) / latRange) * 76;
+
+  return {
+    x: Math.max(5, Math.min(95, x)),
+    y: Math.max(8, Math.min(92, y)),
+  };
+}
 
 function getMarkerPosition(
   report,

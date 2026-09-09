@@ -21,15 +21,35 @@ Presentation & Pitch 5.
 
 ## Critical — must happen before the demo
 
-- [ ] **Create a real Africa's Talking sandbox account** and fill in
-      `backend/.env` (`AT_USERNAME`, `AT_API_KEY`, `AT_VOICE_NUMBER`,
-      optionally `AT_SENDER_ID`). Free at
-      https://account.africastalking.com/. Nothing has been sent for
-      real yet — every alert so far says "(simulated)".
+- [x] **Sandbox Africa's Talking account already set up** (real
+      `AT_USERNAME`/`AT_API_KEY` in local `.env`) — `POST
+      /api/subscribers/verify/request` confirmed the API call succeeds.
+      **But deep research on 2026-09-09 found sandbox mode NEVER
+      delivers to a real phone, for SMS, Voice, or USSD, under any
+      circumstances** (confirmed directly from Africa's Talking's own
+      help center — sandbox traffic always routes to their internal
+      simulator only). An earlier claim in this project that "sandbox
+      works for real sending" was wrong and has been corrected — see
+      `docs/progress-log.md`'s 2026-09-09 entry.
+- [ ] **Create a Live app (not sandbox) and add ~$25 of real prepaid
+      credit** — the only way a real SMS/voice alert actually reaches a
+      phone. Not a subscription; billed per message (~$0.01–0.03/SMS),
+      so $25 covers 100+ real demo sends. See
+      `docs/AfriShield-Hardware-Cost-Breakdown.pdf`'s "Service Cost"
+      section. **Do this well before the 17th** — exact Live-app
+      verification/approval timelines aren't documented, so there's
+      unknown lead time risk if left to the last minute.
 - [ ] **Send a real test SMS** to a team member's own phone via
-      `POST /api/alerts/send` once credentials are set.
-- [ ] **Place a real test voice call** to a team member's own phone via
-      `POST /api/alerts/send` with `"channel": "voice"`.
+      `POST /api/alerts/send`, once on a Live app — as of 2026-09-09
+      this always sends both SMS and voice together (no more `channel`
+      choice), so this single test also covers the next item.
+- [ ] **Place a real test voice call** — now happens automatically as
+      part of the same `POST /api/alerts/send` call above, once on Live.
+- [ ] **USSD: plan to demo via Africa's Talking's own web simulator**
+      (simulator.africastalking.com), not a real phone — going live with
+      USSD needs an actual shortcode application, a bigger/slower step
+      than SMS/voice. Only pursue a real USSD channel if there's
+      confirmed approval time before the 17th.
 - [ ] **Test USSD against Africa's Talking's real sandbox simulator** —
       needs a public URL pointed at `/api/ussd`, and a sandbox USSD
       channel configured to call it. Only tested locally via raw
@@ -40,9 +60,20 @@ Presentation & Pitch 5.
       `cloudflared`'s quick tunnels (no account needed) serve `https://`
       cleanly with no redirect, verified with `curl`.
 - [ ] **Verify Africa's Talking's voice `<Say>` handles non-English text**
-      (Arabic/Swahili/Somali) acceptably — untested. If it doesn't, decide
-      a fallback (e.g. speak English instead of `alert_message_local` for
-      those regions) before the demo, not during it.
+      (Arabic/Swahili/Somali/Amharic) acceptably — still genuinely
+      untested as of 2026-09-09; research confirmed `<Say>` uses Google
+      Cloud TTS underneath, but couldn't get a reliable answer on
+      whether Swahili/Somali/Amharic voices actually exist there. **For
+      the presentation itself, decided to demo in French** — it's a
+      well-established Google TTS language (near-zero voice risk),
+      Latin-script (safe for USSD's known Arabic-encoding blank-screen
+      issue too), and still tells a real localization story (matches
+      Kinshasa/DRC, one of the 10 sample cities, and Côte d'Ivoire, one
+      of Africa's Talking's actual live-covered countries). Swahili was
+      considered too (ties to 3 of AT's live countries directly) but
+      rejected for the live demo specifically due to this same unverified
+      voice-support risk — worth testing separately, just not gambling
+      on it in front of judges.
 - [ ] **Run the Wokwi ESP32 simulation against a real, locally running
       backend — backend side fully proven 2026-08-29, one step left.**
       `hardware/wokwi-flood-sensor/sketch.ino` now uses
@@ -65,6 +96,13 @@ Presentation & Pitch 5.
 
 - [x] Voice alerts for people a text channel doesn't reach (can't read,
       local script, or visually impaired) — built 2026-08-17.
+- [x] **Voice made additive, not opt-in, 2026-09-09.** Voice used to only
+      go out if an admin picked `"channel": "voice"` on a given send —
+      meaning the accessibility benefit depended on someone else
+      remembering to choose it, not on the recipient's actual need. Now
+      every `POST /api/alerts/send` sends both SMS and voice to every
+      subscriber, always (same additive pattern push already used). See
+      `docs/progress-log.md`'s 2026-09-09 entry.
 - [x] **Women and children — the two named groups nothing had been
       deliberately designed for — addressed 2026-08-20.** High-risk
       alerts (all 7 languages) now include a safety-priority line naming
@@ -180,6 +218,28 @@ Presentation & Pitch 5.
       continuing this:** find a second, more recent (post-2010) real
       flood-label source to layer on top — DFO's own archive stops
       there.
+- [x] **The "not a full retrain" blocker above turned out to be
+      solvable, 2026-09-09.** The discharge-percentile approximation
+      `validate_against_dfo.py` already used for evaluation works just
+      as well as a training feature — trained a new model on it
+      (`app/models/train_ml_model_real.py`) and got real improvement:
+      81.2% recall on a held-out real test split vs. the old synthetic
+      model's 27.1% and rules-based's 47.9% on that same split.
+      Threshold-tuned it further (`app/models/tune_ml_threshold.py`):
+      **at threshold 0.80, 62.5% recall / 17.69% false-positive rate —
+      beats rules-based on both axes, not a trade-off.** See
+      `docs/progress-log.md`'s 2026-09-09 (later) entry and
+      `docs/AfriShield-ML-Evolution-Guide.pdf` for the full story.
+- [ ] **Wire the tuned real-data model into production** —
+      `ml_risk_model.py` still loads the old synthetic-trained
+      `ml_risk_model.pkl` with the severity-blend decision logic, not
+      `ml_risk_model_real.pkl` with the 0.80 threshold. Needs: swap the
+      loaded file, change `predict_ml_risk()` to threshold-based logic,
+      re-verify `POST /api/risk-check`/`GET /api/regions` afterward. Also
+      needs a team decision on which threshold to actually ship — 0.80
+      (beats rules-based outright, the easy pick) vs. 0.55 (catches 87.5%
+      of floods but with a real false-alarm cost) — not just a technical
+      choice.
 - [x] **Native-speaker review of Swahili, Arabic, and Somali alert
       wording — all 3 confirmed correct (2026-08-17).** Also added
       city-name localization per the reviewers' feedback (e.g. "Cairo" →

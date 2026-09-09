@@ -307,16 +307,23 @@ def send_incident_response(
 
     if payload.channel in ("sms", "voice"):
         recipients = [s["phone_number"] for s in read_subscribers() if s["location_name"] == report["location_name"]]
+        is_configured = is_sms_configured() if payload.channel == "sms" else is_voice_configured()
         if not recipients:
             send_status = "no_recipients"
-        elif payload.channel == "sms" and is_sms_configured():
-            send_sms(recipients, payload.message)
-            send_status = "sent"
-        elif payload.channel == "voice" and is_voice_configured():
-            place_call(recipients, payload.message)
-            send_status = "sent"
-        else:
+        elif not is_configured:
             send_status = "simulated"
+        else:
+            try:
+                if payload.channel == "sms":
+                    send_sms(recipients, payload.message)
+                else:
+                    place_call(recipients, payload.message)
+                send_status = "sent"
+            except Exception:
+                # e.g. the africastalking SDK rejects a malformed phone
+                # number client-side before ever calling the API — never
+                # let one bad number crash the whole response send.
+                send_status = "failed"
     else:
         # radio / community_leader: no real dispatch integration exists;
         # payload.recipients here is freeform text, not phone numbers.

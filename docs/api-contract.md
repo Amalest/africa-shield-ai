@@ -1,5 +1,13 @@
 # API Contract — Africa Shield AI Backend
 
+**Status (as of 2026-09-09): voice alerts are additive now, not a
+`channel` choice.** `POST /api/alerts/send` no longer accepts `channel`
+— every alert send now fires both SMS and a voice call to every
+subscriber, always, the same way push already worked. The response's
+single `channel` field was replaced with independent `sms_status` /
+`voice_status` fields (see that endpoint's section). Breaking change to
+both the request and response shape.
+
 **Status (as of 2026-09-07, later same day): a security audit found and
 fixed 5 high-severity gaps.** All are breaking changes to the affected
 request shapes, not additive — see each endpoint's section for the exact
@@ -402,7 +410,8 @@ nothing.
     "location_name": "Lagos, Nigeria",
     "risk_level": "high",
     "message_sent": "Flood risk is HIGH in Lagos. Move to higher ground and avoid riverbanks. Prioritize children, elderly people, and pregnant or nursing individuals when evacuating.",
-    "channel": "SMS (simulated)",
+    "sms_status": "simulated",
+    "voice_status": "simulated",
     "recipients": 1,
     "timestamp": "2026-08-17T07:47:30Z",
     "trigger": "manual",
@@ -416,54 +425,85 @@ nothing.
 | `location_name`  | string |                                                  |
 | `risk_level`     | string | `"low"` \| `"medium"` \| `"high"`              |
 | `message_sent`   | string | The exact text that was (or would have been) sent/said, in the region's local language |
-| `channel`        | string | `"SMS"` / `"Voice call"` when actually sent via Africa's Talking, `"SMS (simulated)"` / `"Voice call (simulated)"` when not (no credentials configured, or zero subscribers for that region) — see `POST /api/alerts/send` |
+| `sms_status`     | string | **Replaced the single `channel` field, 2026-09-09.** `"sent"`, `"simulated"` (Africa's Talking SMS not configured), `"failed"`, or `"no_recipients"` — see `POST /api/alerts/send` |
+| `voice_status`   | string | Same vocabulary as `sms_status`, for the voice call. **Every send now does both, always** — voice is no longer an opt-in `channel`. |
 | `recipients`     | int    | **Only present on real-send-log entries.** Number of subscribers the message went to (0 for a simulated send). Absent on the older hardcoded `mock-data.json` entries returned as a fallback — don't assume it's always present. |
 | `timestamp`      | string | ISO 8601, UTC                                   |
 | `trigger`        | string | **New (2026-08-18).** `"manual"` (a person called `POST /api/alerts/send`) or `"automatic"` (a sensor reading pushed the region into `high` — see `POST /api/sensor-reading`). Only present on real-send-log entries, same caveat as `recipients`. |
-| `push_status`    | string | **New (2026-08-28).** `"sent"` (real FCM push delivered), `"simulated"` (devices registered, but no Firebase project configured), `"failed"`, or `"no_recipients"` (no device registered for this region via `POST /api/push-tokens`). Push is additive to whichever `channel` was used, not a separate channel. Only present on real-send-log entries, same caveat as `recipients`. |
+| `push_status`    | string | **New (2026-08-28).** `"sent"` (real FCM push delivered), `"simulated"` (devices registered, but no Firebase project configured), `"failed"`, or `"no_recipients"` (no device registered for this region via `POST /api/push-tokens`). Push is additive alongside SMS/voice, not a separate channel choice. Only present on real-send-log entries, same caveat as `recipients`. |
+
+Log entries written before 2026-09-09 still have the old single
+`channel` field instead of `sms_status`/`voice_status` — `alert_log.json`
+is gitignored runtime state, never migrated retroactively; a fresh clone
+only ever produces the new shape.
 
 ---
 
 ## `POST /api/alerts/send`
 
 Sends a flood alert for one monitored region to every subscriber
-registered for it, via Africa's Talking — SMS or a voice call that reads
-the alert aloud (`channel: "voice"`; see `POST /api/voice/callback`
-below), the latter for recipients a text-only channel doesn't reach
-(can't read, or the local script, or are visually impaired). Real when
-the matching credentials are configured (see `backend/.env.example`) and
-the region has at least one subscriber; otherwise falls back to a clearly
-labeled simulation so this is always safe to call.
+registered for it, via Africa's Talking. **As of 2026-09-09, every
+subscriber gets both a text message and a voice call that reads the
+alert aloud, always** — voice used to be a `channel` an admin had to
+opt into per send; now it's additive, like push. Voice exists in this
+project specifically for people a text-only channel doesn't reach
+(can't read, don't read the local script, are visually impaired) —
+making it opt-in meant that accessibility only happened when someone
+remembered to choose it. Each channel independently falls back to a
+clearly labeled simulation when its Africa's Talking credentials aren't
+configured, or the region has zero subscribers, so this is always safe
+to call.
 
 Also pushes a real notification (Firebase Cloud Messaging) to every
-device registered for this region via `POST /api/push-tokens`, regardless
-of `channel` — push is additive, not a third channel choice, since a
-device can want push *and* SMS at once. See `push_status` below.
+device registered for this region via `POST /api/push-tokens`, additive
+alongside SMS/voice the same way. See `push_status` below.
 
 ### Request
 
 ```json
 {
-  "location_name": "Lagos, Nigeria",
-  "channel": "sms"
+  "location_name": "Lagos, Nigeria"
 }
 ```
 
 | Field           | Type   | Notes                                                        |
 |-----------------|--------|----------------------------------------------------------------|
 | `location_name` | string | Must exactly match a `location_name` in `backend/app/data/regions.json` — 404 otherwise. |
-| `channel`       | string | `"sms"` (default) or `"voice"`. |
+
+**Breaking change (2026-09-09): `channel` is no longer accepted** —
+there's nothing left to pick, since both channels always fire.
 
 ### Response
 
-Same shape as one entry of `GET /api/alerts`, above (includes `recipients`
-and `trigger`). Calling this endpoint directly always logs
-`"trigger": "manual"` — see `POST /api/sensor-reading` for the automatic
-counterpart.
+```json
+{
+  "location_name": "Maputo, Mozambique",
+  "risk_level": "low",
+  "message_sent": "O risco de inundação é BAIXO em Maputo. Nenhuma ação é necessária neste momento.",
+  "sms_status": "sent",
+  "voice_status": "simulated",
+  "recipients": 1,
+  "timestamp": "2026-09-09T12:40:34Z",
+  "trigger": "manual",
+  "push_status": "no_recipients"
+}
+```
+
+**Breaking change (2026-09-09): the single `channel` field (e.g.
+`"SMS (simulated)"`) was replaced with independent `sms_status` and
+`voice_status` fields**, each one of `"sent"`, `"simulated"` (Africa's
+Talking not configured for that channel), `"failed"` (a real send was
+attempted and errored — e.g. a malformed phone number the SDK rejects
+client-side), or `"no_recipients"`. Same vocabulary `push_status` already
+used, now shared by all three channels. Calling this endpoint directly
+always logs `"trigger": "manual"` — see `POST /api/sensor-reading` for
+the automatic counterpart.
 
 Recipients come from `backend/app/data/subscribers.json` — a list of
 `{"phone_number": ..., "location_name": ...}` pairs, populated by
-`POST /api/ussd`'s subscribe flow (or seeded by hand for testing).
+`POST /api/subscribers` (requires phone verification — see that
+endpoint) or `POST /api/ussd`'s subscribe flow (no verification needed
+there — a real USSD session's phone number is asserted by the carrier).
 
 ---
 

@@ -1,0 +1,17 @@
+name: 'Detect -> Decide -> Act cycle'
+version: 1
+author: 'Africa Shield AI team'
+steps:
+  - wait-serial: 'Distance to water surface'
+  - set-control:
+      part-id: sensor
+      control: distance
+      value: 5
+  - delay: 1000ms
+  - wait-serial: 'HIGH WATER DETECTED'
+  - set-control:
+      part-id: sensor
+      control: distance
+      value: 100
+  - delay: 1000ms
+  - wait-serial: 'Water level normal'

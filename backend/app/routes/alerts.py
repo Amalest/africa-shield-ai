@@ -1,7 +1,6 @@
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Literal
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -24,14 +23,14 @@ ALERT_STATE_FILE = Path(__file__).resolve().parent.parent / "data" / "region_ale
 
 class SendAlertRequest(BaseModel):
     location_name: str
-    channel: Literal["sms", "voice"] = "sms"
 
 
 class SendAlertResponse(BaseModel):
     location_name: str
     risk_level: str
     message_sent: str
-    channel: str
+    sms_status: str
+    voice_status: str
     recipients: int
     timestamp: str
     trigger: str
@@ -64,11 +63,39 @@ def get_alerts() -> list[dict]:
     return mock_data["alerts"]
 
 
-def send_alert_for_region(location_name: str, channel: str = "sms", trigger: str = "manual") -> dict:
+def _send_channel(is_configured: bool, phone_numbers: list[str], send_fn) -> str:
+    """Shared status logic for SMS/voice, mirroring push's exact
+    vocabulary (`"sent"` / `"simulated"` / `"failed"` / `"no_recipients"`)
+    so all three channels report status the same way. `send_fn` is called
+    with no arguments (a closure over the actual gateway call) so this
+    helper doesn't need to know which gateway it's driving."""
+    if not phone_numbers:
+        return "no_recipients"
+    if not is_configured:
+        return "simulated"
+    try:
+        send_fn()
+        return "sent"
+    except Exception:
+        # e.g. the africastalking SDK rejects a malformed phone number
+        # client-side before ever calling the API — never let a single
+        # bad number crash the whole alert send.
+        return "failed"
+
+
+def send_alert_for_region(location_name: str, trigger: str = "manual") -> dict:
     """The actual work behind `POST /api/alerts/send`, factored out so
     other code paths — specifically the automatic threshold trigger in
     `app/routes/sensors.py` — can send a real alert the exact same way a
     manual button-press does, without duplicating this logic.
+
+    **Every subscriber gets both SMS and a voice call, always** — voice
+    isn't a channel an admin has to remember to pick. Voice exists in
+    this project specifically for people a text channel doesn't reach
+    (can't read, don't read the local script, are visually impaired);
+    making it opt-in per send meant that accessibility only worked when
+    someone remembered to choose it. This mirrors how push already
+    behaves: additive, not a channel choice.
 
     `trigger` is recorded in the log entry ("manual" or "automatic") so
     `GET /api/alerts` can honestly show which alerts a person sent versus
@@ -89,21 +116,10 @@ def send_alert_for_region(location_name: str, channel: str = "sms", trigger: str
     subscribers = _read_json(SUBSCRIBERS_FILE, [])
     phone_numbers = [s["phone_number"] for s in subscribers if s["location_name"] == location_name]
 
-    if channel == "voice":
-        if is_voice_configured() and phone_numbers:
-            place_call(phone_numbers, message_local)
-            resolved_channel = "Voice call"
-        else:
-            resolved_channel = "Voice call (simulated)"
-    else:
-        if is_sms_configured() and phone_numbers:
-            send_sms(phone_numbers, message_local)
-            resolved_channel = "SMS"
-        else:
-            resolved_channel = "SMS (simulated)"
+    sms_status = _send_channel(is_sms_configured(), phone_numbers, lambda: send_sms(phone_numbers, message_local))
+    voice_status = _send_channel(is_voice_configured(), phone_numbers, lambda: place_call(phone_numbers, message_local))
 
-    # Push is additive, not a channel choice — it rides alongside whatever
-    # `channel` was picked, for devices that opted in via
+    # Push is additive too, for devices that opted in via
     # POST /api/push-tokens (mobile app's Settings > Alert Channels >
     # "Mobile App" toggle). A failure here never breaks the alert itself;
     # SMS/voice already carries the message.
@@ -123,7 +139,8 @@ def send_alert_for_region(location_name: str, channel: str = "sms", trigger: str
         "location_name": location_name,
         "risk_level": risk_level,
         "message_sent": message_local,
-        "channel": resolved_channel,
+        "sms_status": sms_status,
+        "voice_status": voice_status,
         "recipients": len(phone_numbers),
         "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "trigger": trigger,
@@ -134,10 +151,11 @@ def send_alert_for_region(location_name: str, channel: str = "sms", trigger: str
 
 
 def maybe_auto_trigger(location_name: str, risk_level: str) -> dict | None:
-    """Automatically sends an SMS alert the first time a region's risk
-    crosses INTO "high" — not on every reading while it stays high, so a
-    sensor reporting every 15 seconds (see `hardware/wokwi-flood-sensor/`)
-    doesn't spam its subscribers with a duplicate alert each time.
+    """Automatically sends an SMS + voice alert the first time a region's
+    risk crosses INTO "high" — not on every reading while it stays high,
+    so a sensor reporting every 15 seconds (see
+    `hardware/wokwi-flood-sensor/`) doesn't spam its subscribers with a
+    duplicate alert each time.
 
     Tracks each region's last-seen risk_level in
     `app/data/region_alert_state.json` specifically to detect that
@@ -160,7 +178,7 @@ def maybe_auto_trigger(location_name: str, risk_level: str) -> dict | None:
     ALERT_STATE_FILE.write_text(json.dumps(state, indent=2), encoding="utf-8")
 
     if risk_level == "high" and previous_level != "high":
-        return send_alert_for_region(location_name, channel="sms", trigger="automatic")
+        return send_alert_for_region(location_name, trigger="automatic")
     return None
 
 
@@ -169,30 +187,31 @@ def send_alert(payload: SendAlertRequest) -> SendAlertResponse:
     """Sends a real alert via Africa's Talking for one of the monitored
     regions in `app/data/regions.json`, to every subscriber registered for
     that region in `app/data/subscribers.json` (subscribers are added via
-    `POST /api/ussd`, or seeded by hand for testing).
+    `POST /api/subscribers` or `POST /api/ussd`, or seeded by hand for
+    testing).
 
-    `channel="sms"` (default) sends a text message. `channel="voice"`
-    places a phone call that reads the alert aloud when answered (see
-    `app/models/voice_gateway.py` and `app/routes/voice.py`) — for
-    recipients a text-only channel doesn't reach (can't read, or the
-    local script, or are visually impaired).
-
-    Either channel falls back to a clearly labeled simulation when its
-    Africa's Talking credentials aren't configured yet, or when the
-    region has zero subscribers, so this endpoint is always safe to call,
-    not just in a fully configured environment.
+    **Every subscriber gets both a text message and a phone call reading
+    the alert aloud, always** — not a channel an admin has to pick. Voice
+    exists in this project specifically for people a text-only channel
+    doesn't reach (can't read, don't read the local script, are visually
+    impaired); making it opt-in per send meant that accessibility only
+    happened when someone remembered to choose it, so this doesn't ask.
+    `sms_status`/`voice_status` in the response are each independently
+    `"sent"`, `"simulated"` (Africa's Talking not configured), `"failed"`
+    (a real send was attempted and errored), or `"no_recipients"` — so a
+    voice outage, say, never hides whether the SMS half worked.
 
     Also pushes a real notification (Firebase Cloud Messaging) to every
     device registered for this region via `POST /api/push-tokens`,
-    regardless of `channel` — push is additive, not a third channel
-    choice. `push_status` in the response/log is `"sent"`, `"simulated"`
-    (no Firebase project configured — see
-    `app/models/push_gateway.py`), `"failed"`, or `"no_recipients"`.
+    additive alongside SMS/voice the same way. `push_status` uses the
+    identical vocabulary — `"sent"`, `"simulated"` (no Firebase project
+    configured — see `app/models/push_gateway.py`), `"failed"`, or
+    `"no_recipients"`.
 
     This is always `trigger: "manual"` in the log — see
     `POST /api/sensor-reading` for the automatic counterpart."""
     try:
-        entry = send_alert_for_region(payload.location_name, payload.channel, trigger="manual")
+        entry = send_alert_for_region(payload.location_name, trigger="manual")
     except LookupError:
         raise HTTPException(status_code=404, detail=f"Unknown region: {payload.location_name}")
     return SendAlertResponse(**entry)

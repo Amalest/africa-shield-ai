@@ -1,0 +1,47 @@
+{
+  "version": 1,
+  "author": "Africa Shield AI team",
+  "editor": "wokwi",
+  "parts": [
+    { "type": "wokwi-esp32-devkit-v1", "id": "esp", "top": 0, "left": 0, "attrs": {} },
+    { "type": "wokwi-hc-sr04", "id": "sensor", "top": -140, "left": -220, "attrs": {} },
+    { "type": "wokwi-servo", "id": "gate_servo", "top": -140, "left": 220, "attrs": {} },
+    { "type": "wokwi-servo", "id": "wall_servo", "top": -20, "left": 220, "attrs": {} },
+    { "type": "wokwi-relay-module", "id": "pump_relay", "top": 100, "left": 220, "attrs": {} },
+    { "type": "wokwi-resistor", "id": "r_green", "top": 140, "left": -220, "attrs": { "value": "220" } },
+    { "type": "wokwi-led", "id": "green_led", "top": 140, "left": -170, "attrs": { "color": "green" } },
+    { "type": "wokwi-resistor", "id": "r_red", "top": 190, "left": -220, "attrs": { "value": "220" } },
+    { "type": "wokwi-led", "id": "red_led", "top": 190, "left": -170, "attrs": { "color": "red" } }
+  ],
+  "connections": [
+    [ "esp:D5", "sensor:TRIG", "green", [] ],
+    [ "esp:D18", "sensor:ECHO", "blue", [] ],
+    [ "sensor:VCC", "esp:VIN", "red", [] ],
+    [ "sensor:GND", "esp:GND.1", "black", [] ],
+
+    [ "esp:D13", "gate_servo:PWM", "orange", [] ],
+    [ "gate_servo:V+", "esp:VIN", "red", [] ],
+    [ "gate_servo:GND", "esp:GND.2", "black", [] ],
+
+    [ "esp:D12", "wall_servo:PWM", "orange", [] ],
+    [ "wall_servo:V+", "esp:VIN", "red", [] ],
+    [ "wall_servo:GND", "esp:GND.2", "black", [] ],
+
+    [ "esp:D14", "pump_relay:IN", "orange", [] ],
+    [ "pump_relay:VCC", "esp:VIN", "red", [] ],
+    [ "pump_relay:GND", "esp:GND.2", "black", [] ],
+
+    [ "esp:D27", "r_green:1", "green", [] ],
+    [ "r_green:2", "green_led:A", "green", [] ],
+    [ "green_led:C", "esp:GND.2", "black", [] ],
+
+    [ "esp:D26", "r_red:1", "red", [] ],
+    [ "r_red:2", "red_led:A", "red", [] ],
+    [ "red_led:C", "esp:GND.2", "black", [] ],
+
+    [ "esp:TX0", "$serialMonitor:RX", "", [] ],
+    [ "esp:RX0", "$serialMonitor:TX", "", [] ]
+  ],
+  "dependencies": {},
+  "serialMonitor": { "display": "always", "collapse": false }
+}

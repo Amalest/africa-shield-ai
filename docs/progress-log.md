@@ -5,6 +5,134 @@ first for current state; scroll down for history.
 
 ---
 
+## 2026-09-09 (later same day) — ML model retrained on real data, then threshold-tuned to beat the rules-based model
+
+Real, meaningful follow-up to the 2026-08-29 DFO validation work — that
+session only used real data to *check* the existing models; this one
+uses it to actually *train* a new one, and finds a genuine improvement.
+
+### Completed
+- **Extracted shared real-data feature logic into
+  `app/models/dfo_features.py`** (`load_usable_rows()`,
+  `discharge_percentile_by_city()`, `build_pseudo_features()`) so
+  `validate_against_dfo.py` and the new training script use the exact
+  same discharge-percentile-as-river-level approximation instead of two
+  copies drifting apart. Refactored `validate_against_dfo.py` to import
+  from it and re-ran it to confirm byte-identical output to before the
+  refactor (41.0%/28.0% recall, 21.99%/13.73% FPR — unchanged).
+- **`app/models/train_ml_model_real.py`** — trains on the real
+  `real_training_data_dfo.csv` (40,904 usable real rows, 239 real
+  DFO-confirmed elevated-risk days) instead of synthetic data, with
+  `class_weight="balanced"` to keep the rare flood class (0.58% of rows)
+  from being ignored. Tried Logistic Regression and Random Forest; on a
+  held-out 20% real test split (never seen during training — avoids the
+  leakage risk of training and "validating" on the same data),
+  **Logistic Regression won on recall: 81.2% vs. the old synthetic
+  model's 27.1% and rules-based's 47.9% on this same held-out set** (not
+  the full-239-row figures quoted elsewhere, which aren't a fair
+  comparison to a model that trained on part of that data). Saved to
+  `ml_risk_model_real.pkl` — **not yet wired into `ml_risk_model.py`**.
+- **`app/models/tune_ml_threshold.py`** — swept the model's decision
+  threshold (default is an implicit ~50% confidence cutoff) instead of
+  accepting the default. Found **threshold 0.80: 62.5% recall, 17.69%
+  false-positive rate — better than rules-based on both axes at once**
+  (rules-based: 47.9% recall, 21.92% FPR), not a recall-for-FPR
+  trade-off. Also reports the higher-recall end of the curve (threshold
+  0.55: 87.5% recall, 42.15% FPR) as an option if the team ever wants to
+  prioritize catching more floods over fewer false alarms.
+- **Caught and fixed a real bug while building the threshold sweep**: an
+  early version of its recall metric used a looser "elevated vs. low"
+  definition than `validate_against_dfo.py`/`train_ml_model_real.py`'s
+  stricter "predicted level must meet or exceed the true level"
+  definition, which silently inflated recall numbers and made results
+  incomparable across scripts. Fixed before reporting any numbers
+  publicly — caught by cross-checking the rules-based/old-ML figures
+  against already-known values from the other two scripts, which didn't
+  match until the metric was unified.
+- Wrote `docs/AfriShield-ML-Evolution-Guide.pdf` — a beginner-friendly,
+  5-chapter walkthrough of this whole progression (hand-written formula
+  → synthetic ML → real-data validation reality check → real-data
+  training → threshold tuning) plus a 12-term glossary (recall, false
+  positive, FPR, precision, threshold, class imbalance, class weight
+  balancing, Logistic Regression, training/test data, overfitting,
+  Youden's J), for sharing with non-ML teammates.
+
+### Not yet started
+- **The tuned real-data model is not wired into production.**
+  `ml_risk_model.py`'s `predict_ml_risk()` still loads the old
+  synthetic-trained `ml_risk_model.pkl` and uses the severity-weighted
+  blend approach, not `ml_risk_model_real.pkl` with a 0.80 threshold.
+  Swapping it in needs: replacing the loaded model file, changing
+  `predict_ml_risk()`'s decision logic to threshold-based instead of
+  blend-based, and re-verifying `POST /api/risk-check` and
+  `GET /api/regions` end-to-end afterward.
+- The discharge-percentile-as-river-level approximation is still real,
+  still honest, but still an approximation — same standing caveat as the
+  2026-08-29 validation work.
+- No decision yet on which threshold to actually ship (0.80's "beats
+  rules-based on both axes" is the easy, defensible pick; 0.55's "catch
+  almost everything" is a real option too, just with a real false-alarm
+  cost) — a team call, not a technical one.
+
+---
+
+## 2026-09-09 — Voice alerts made additive, matching push (no longer a `channel` choice)
+
+Closes a real accessibility gap: voice existed in this project
+specifically for people a text-only channel doesn't reach, but was only
+sent if an admin remembered to pick `"channel": "voice"` on a given send
+— meaning that accessibility depended on someone else's manual choice,
+not on the recipient's actual need.
+
+### Completed
+- **`POST /api/alerts/send` now sends both SMS and a voice call to every
+  subscriber, always.** Removed the `channel` request field entirely (no
+  more `"sms"` vs `"voice"` choice) and replaced the single `channel`
+  response field with independent `sms_status`/`voice_status` fields,
+  reusing the exact same vocabulary `push_status` already established
+  (`"sent"` / `"simulated"` / `"failed"` / `"no_recipients"`) — all three
+  channels (SMS, voice, push) now report status identically. Confirmed
+  no frontend or mobile code called this endpoint with a `channel` param
+  before making the change, so nothing else needed updating.
+- **`maybe_auto_trigger()`** (the sensor-reading auto-alert path) updated
+  to match — an automatic "high" transition now auto-sends both SMS and
+  voice, not just SMS.
+- **Also fixed a real, previously-flagged latent bug while touching this
+  code**: `send_alert_for_region()`'s SMS/voice sends had no exception
+  handling, so a malformed phone number could crash the whole endpoint
+  with a raw 500 (the exact class of bug found and fixed in
+  `POST /api/subscribers/verify/request` on 2026-09-07/08, but noted then
+  as "still exists in alerts.py, not yet fixed"). Extracted a shared
+  `_send_channel()` helper so SMS and voice share one status-handling
+  code path, both wrapped in try/except → `"failed"` status instead of
+  crashing. Applied the identical fix to
+  `POST /api/admin/incidents/{id}/response` in `admin_reports.py`, which
+  had the same unguarded pattern.
+- Verified end-to-end via curl against a running server: a region with a
+  real subscriber (Maputo) correctly showed `sms_status: "sent"`
+  (real Africa's Talking send) and `voice_status: "simulated"` (no
+  `AT_VOICE_NUMBER` configured); a region with none (Nairobi) correctly
+  showed `"no_recipients"` for both; an unknown region still 404s.
+  `GET /api/alerts` confirmed to return old log entries (pre-2026-09-09,
+  still carrying the old `channel` field) and new entries (`sms_status`/
+  `voice_status`) side by side without crashing — `alert_log.json` is
+  gitignored runtime state, never migrated retroactively.
+
+### Not yet started
+- This makes every alert send more expensive (SMS + voice both billed,
+  where it used to be one or the other) — not a concern for the hackathon
+  demo ($25 of Africa's Talking credit easily covers it), but worth a
+  one-line honesty note in the pitch if asked about real-world cost at
+  scale.
+- `POST /api/admin/incidents/{id}/response` (the admin's targeted,
+  per-incident response tool) deliberately was NOT changed to be
+  SMS+voice-additive — that endpoint lets an admin pick a specific
+  channel for a specific incident on purpose (e.g. "just call this
+  person"), which is a different use case from the broadcast regional
+  alert this change applies to.
+
+---
+
 ## 2026-09-07 (later same day) — Security audit and fixes: 5 high, 3 medium severity gaps closed
 
 A full-project security audit (backend, mobile, the Wokwi hardware sim —

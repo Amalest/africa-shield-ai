@@ -88,13 +88,14 @@ shapes. Summary:
   something has been sent via `POST /api/alerts/send`; falls back to the
   hardcoded list in `../docs/mock-data.json` before that.
 - `POST /api/alerts/send` — real. Sends a region's alert via Africa's
-  Talking to its subscribers (`app/data/subscribers.json`), by SMS
-  (default) or voice call (`"channel": "voice"`); simulates the send
-  (clearly labeled) if the matching credentials aren't set or the region
-  has no subscribers yet. Also pushes a real notification (Firebase
-  Cloud Messaging) to every device registered for this region via
-  `POST /api/push-tokens`, additive alongside whichever channel was
-  picked — see `push_status` in the response.
+  Talking to its subscribers (`app/data/subscribers.json`). **As of
+  2026-09-09, every subscriber gets both SMS and a voice call, always**
+  — no more picking one via `"channel"` (removed). Each independently
+  simulates (clearly labeled) if its credentials aren't set or the
+  region has no subscribers yet — see `sms_status`/`voice_status` in the
+  response. Also pushes a real notification (Firebase Cloud Messaging)
+  to every device registered for this region via `POST /api/push-tokens`,
+  additive the same way — see `push_status`.
 - `POST /api/push-tokens` / `DELETE /api/push-tokens/{token}` — real.
   Registers/unregisters a mobile device's FCM token against a region, so
   `POST /api/alerts/send` (manual or automatic) can push to it. See
@@ -188,13 +189,27 @@ shapes. Summary:
   `app/models/validate_against_dfo.py` — real historical flood data
   (Dartmouth Flood Observatory, 49 events across all 10 cities) paired
   with real Open-Meteo rainfall/discharge, used to genuinely validate
-  (not retrain) both risk scores against 239 real confirmed flood-days —
-  see `docs/pitch-notes.md`'s "Real-data validation" section for the
-  actual numbers, and `docs/progress-log.md`'s 2026-08-29 entry for why
-  this stayed validation rather than becoming a production retrain
-  (GloFAS discharge ≠ the model's river-level input, and the live
-  sensor-reading endpoint has no history to compute a percentile from
-  anyway).
+  both risk scores against 239 real confirmed flood-days — see
+  `docs/pitch-notes.md`'s "Real-data validation" section for the actual
+  numbers. `app/models/dfo_features.py` holds the shared
+  discharge-percentile-as-river-level approximation both this script and
+  the one below use, so they can't silently drift apart.
+- **`app/models/train_ml_model_real.py` (new, 2026-09-09) — actually
+  retrains on that same real data**, not just validates against it.
+  Real class imbalance (239 of 40,904 rows, 0.58%, are confirmed
+  elevated-risk) handled with `class_weight="balanced"`. On a held-out
+  20% real test split: **81.2% recall vs. the old synthetic model's
+  27.1% and rules-based's 47.9% on that same held-out set.** Saved to
+  `ml_risk_model_real.pkl` — **not yet wired into `ml_risk_model.py`**,
+  see `docs/progress-log.md`'s 2026-09-09 (later) entry for why and
+  what's left.
+- **`app/models/tune_ml_threshold.py` (new, 2026-09-09)** — sweeps the
+  real-data model's decision threshold instead of accepting the default
+  ~50% cutoff. **Threshold 0.80: 62.5% recall, 17.69% false-positive
+  rate — beats the rules-based model on both axes at once** (rules-based:
+  47.9% recall, 21.92% FPR on the same held-out set), not a trade-off.
+  See `docs/AfriShield-ML-Evolution-Guide.pdf` for a beginner-friendly
+  walkthrough of this whole progression plus a terminology glossary.
 - See [`../docs/architecture.md`](../docs/architecture.md)'s "Two risk
   scores, on purpose" section for why both are kept side by side.
 
@@ -208,8 +223,9 @@ shapes. Summary:
   (`place_call()`), needs `AT_VOICE_NUMBER` too (your sandbox app's Voice
   number). A voice call reads the alert aloud when answered — for
   recipients a text-only channel doesn't reach (can't read, or the local
-  script, or are visually impaired). `POST /api/alerts/send` with
-  `"channel": "voice"` uses this path instead of SMS.
+  script, or are visually impaired). **As of 2026-09-09, `POST
+  /api/alerts/send` always uses this path alongside SMS, for every
+  subscriber** — no longer a `"channel"` a caller has to pick.
 - `app/data/subscribers.json` is the shared recipient list (used by both
   SMS and voice) — `{"phone_number": ..., "location_name": ...}` pairs.
   Starts empty; add entries by hand for testing, or use
@@ -240,9 +256,10 @@ shapes. Summary:
   `POST /api/push-tokens` (the mobile app calls this when a user enables
   the "Mobile App" alert channel in Settings). Starts empty.
 - Push is additive to every send in `POST /api/alerts/send` (manual or
-  automatic via `maybe_auto_trigger()`) — it's not a third `channel`
-  choice alongside `"sms"`/`"voice"`, since a device can want push
-  *and* SMS at once.
+  automatic via `maybe_auto_trigger()`) — same as SMS and voice, which
+  are also both additive now rather than a `"channel"` choice (see
+  `docs/progress-log.md`'s 2026-09-09 entry). A device can want push
+  *and* SMS *and* voice all at once.
 - The mobile app also needs its own Firebase config to obtain a device
   token in the first place, separate from this backend's service-account
   key — see `mobile-app/lib/firebase_options.dart`'s doc comment.

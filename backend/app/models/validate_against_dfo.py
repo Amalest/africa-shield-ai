@@ -32,62 +32,18 @@ Run it (needs `real_training_data_dfo.csv` to already exist — run
     .venv/Scripts/python.exe -m app.models.validate_against_dfo
 """
 
-import csv
 from collections import defaultdict
-from pathlib import Path
 
+from app.models.dfo_features import discharge_percentile_by_city, load_usable_rows
 from app.models.ml_risk_model import predict_ml_risk
 from app.models.risk_model import risk_score_breakdown
-
-DATA_FILE = Path(__file__).resolve().parent.parent / "data" / "real_training_data_dfo.csv"
 
 RISK_RANK = {"low": 0, "medium": 1, "high": 2}
 
 
-def _load_rows() -> list[dict]:
-    """Drops rows with no discharge value — discovered 2026-08-29 while
-    building this: GloFAS has **zero** discharge coverage at all for
-    Maputo and Mogadishu's coordinates in this dataset (100% missing for
-    both, every single day 1985–2010), and for the other 8 cities,
-    coverage only starts 1997-01-01 (100% missing 1985–1996, complete
-    1997–2010). This isn't a bug in the fetch script — Open-Meteo's
-    GloFAS-backed flood API genuinely returns `null` for these
-    (location, date) combinations. Real limitation, not a fixable one
-    from this side; see this file's module docstring."""
-    with open(DATA_FILE, newline="", encoding="utf-8") as f:
-        rows = list(csv.DictReader(f))
-    return [r for r in rows if r["river_discharge_m3s"] != ""]
-
-
-def _discharge_percentile_by_city(rows: list[dict]) -> dict[str, dict[str, float]]:
-    """{location_name: {date: percentile_0_to_1}} — each city's discharge
-    values ranked against that same city's own observed range only.
-    Never compared across cities/rivers, since discharge scale varies
-    enormously by river size and isn't the point here; only "was this
-    day unusually high for this particular river" is."""
-    by_city: dict[str, list[tuple[str, float]]] = defaultdict(list)
-    for row in rows:
-        by_city[row["location_name"]].append((row["date"], float(row["river_discharge_m3s"])))
-
-    result: dict[str, dict[str, float]] = {}
-    for city, entries in by_city.items():
-        values = sorted(v for _, v in entries)
-        n = len(values)
-
-        def percentile_of(value: float) -> float:
-            # simple rank-based percentile; ties broken by position, fine
-            # for this evaluation's purposes
-            import bisect
-
-            return bisect.bisect_left(values, value) / n
-
-        result[city] = {date: percentile_of(v) for date, v in entries}
-    return result
-
-
 def main() -> None:
-    rows = _load_rows()
-    percentiles = _discharge_percentile_by_city(rows)
+    rows = load_usable_rows()
+    percentiles = discharge_percentile_by_city(rows)
 
     # RIVER_LEVEL_CAP_M-scale stand-in: a discharge percentile of 1.0
     # (this river's historical maximum in the 26-year window) is treated
@@ -136,7 +92,7 @@ def main() -> None:
             if ml_level != "low":
                 false_positive_ml += 1
 
-    print(f"Evaluated {len(rows)} real (city, date) rows from {DATA_FILE.name}")
+    print(f"Evaluated {len(rows)} real (city, date) rows from real_training_data_dfo.csv")
     print(f"Real DFO-confirmed elevated-risk days: {total_elevated}")
     print()
     print("Recall on real DFO-confirmed flood days (model's level >= DFO's recorded level):")

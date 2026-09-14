@@ -57,8 +57,12 @@ def find_admin_by_id(admin_id: str) -> dict | None:
     return next((a for a in _read_admins() if a["id"] == admin_id), None)
 
 
-def create_admin(name: str, email: str, password: str) -> dict:
-    """Raises ValueError if the email is already registered."""
+def create_admin(name: str, email: str, password: str, phone_number: str | None = None) -> dict:
+    """Raises ValueError if the email is already registered.
+
+    `phone_number` is optional (older admin records won't have one) but
+    needed going forward — it's how `app/routes/pending_alerts.py` reaches
+    an operator by SMS when a sensor-triggered alert needs review."""
     email = email.strip().lower()
     if find_admin_by_email(email) is not None:
         raise ValueError(f"An admin with email {email} already exists")
@@ -67,6 +71,7 @@ def create_admin(name: str, email: str, password: str) -> dict:
         "id": uuid.uuid4().hex,
         "name": name,
         "email": email,
+        "phone_number": phone_number,
         "password_hash": bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8"),
         "created_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     }
@@ -74,6 +79,10 @@ def create_admin(name: str, email: str, password: str) -> dict:
     admins.append(admin)
     _write_admins(admins)
     return admin
+
+
+def list_admins() -> list[dict]:
+    return _read_admins()
 
 
 def verify_password(password: str, password_hash: str) -> bool:
@@ -121,7 +130,13 @@ def public_admin(admin: dict) -> dict:
     """Strips `password_hash` before an admin record ever leaves the
     server — every response/route in this module must go through this,
     never return a raw admin dict."""
-    return {"id": admin["id"], "name": admin["name"], "email": admin["email"], "created_at": admin["created_at"]}
+    return {
+        "id": admin["id"],
+        "name": admin["name"],
+        "email": admin["email"],
+        "phone_number": admin.get("phone_number"),
+        "created_at": admin["created_at"],
+    }
 
 
 def decode_token_or_401(authorization: str | None) -> dict:

@@ -36,9 +36,11 @@ FIREBASE_SERVICE_ACCOUNT_JSON = os.environ.get("FIREBASE_SERVICE_ACCOUNT_JSON")
 ADMIN_JWT_SECRET = os.environ.get("ADMIN_JWT_SECRET") or secrets.token_hex(32)
 _ADMIN_JWT_SECRET_IS_EPHEMERAL = not os.environ.get("ADMIN_JWT_SECRET")
 
-# Shared invite code required by POST /api/admin/signup. Signup is
-# disabled entirely (503) until this is set — the safe default for an
-# admin console is "nobody can create an account", not "anyone can". Give
+# Shared code required by POST /api/admin/signup — but only for creating
+# the very first admin account on a fresh deployment; see app/auth.py and
+# app/routes/admin_auth.py. That route is permanently locked (403) once
+# any admin exists, so this code stops mattering after the team's first
+# account is created. Disabled entirely (503) until this is set. Give
 # this value to teammates directly (Slack/etc.), never commit it.
 ADMIN_SIGNUP_CODE = os.environ.get("ADMIN_SIGNUP_CODE")
 

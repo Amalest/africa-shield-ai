@@ -74,6 +74,25 @@ uvicorn app.main:app --reload
 The API is at `http://localhost:8000`. Interactive docs (Swagger UI) are at
 `http://localhost:8000/docs`.
 
+## Test
+
+```bash
+pytest
+```
+
+61 tests covering the highest-stakes logic: the rules-based risk formula
+and its threshold boundaries, the AI-priority triage weighting, admin
+auth (password hashing, JWT issuance/expiry/revocation), the real
+alert-send pipeline, and — the newest and most safety-critical piece —
+the operator-review pending-alert state machine (`app/routes/pending_alerts.py`),
+including the fail-open auto-send-on-timeout path. Every test module
+redirects that module's `SOMETHING_FILE` storage constant to a `tmp_path`
+via `monkeypatch` (see `tests/conftest.py`), so running the suite never
+reads or writes this project's real `app/data/*.json` files, and an
+autouse fixture forces every SMS/voice send to the "simulated" path so
+the suite runs fully offline with no real (even sandbox) Africa's
+Talking API calls.
+
 ## Endpoints
 
 See [`../docs/api-contract.md`](../docs/api-contract.md) for exact request/response
@@ -197,19 +216,37 @@ shapes. Summary:
 - **`app/models/train_ml_model_real.py` (new, 2026-09-09) — actually
   retrains on that same real data**, not just validates against it.
   Real class imbalance (239 of 40,904 rows, 0.58%, are confirmed
-  elevated-risk) handled with `class_weight="balanced"`. On a held-out
-  20% real test split: **81.2% recall vs. the old synthetic model's
-  27.1% and rules-based's 47.9% on that same held-out set.** Saved to
-  `ml_risk_model_real.pkl` — **not yet wired into `ml_risk_model.py`**,
-  see `docs/progress-log.md`'s 2026-09-09 (later) entry for why and
-  what's left.
+  elevated-risk) handled with `class_weight="balanced"`. **Its original
+  held-out-split numbers (81.2% recall) had a train/test leakage bug —
+  see the correction below.** Saved to `ml_risk_model_real.pkl` — **not
+  wired into `ml_risk_model.py`**; production still uses the original
+  synthetic-trained model.
 - **`app/models/tune_ml_threshold.py` (new, 2026-09-09)** — sweeps the
   real-data model's decision threshold instead of accepting the default
-  ~50% cutoff. **Threshold 0.80: 62.5% recall, 17.69% false-positive
-  rate — beats the rules-based model on both axes at once** (rules-based:
-  47.9% recall, 21.92% FPR on the same held-out set), not a trade-off.
-  See `docs/AfriShield-ML-Evolution-Guide.pdf` for a beginner-friendly
-  walkthrough of this whole progression plus a terminology glossary.
+  ~50% cutoff. Its first reported numbers shared the same leakage bug as
+  above — see the correction below for the trustworthy figures.
+- **Correction, same day: the row-level train/test split leaked flood
+  events across train and test (19 of 29 events, 65%, had days on both
+  sides), inflating the numbers above.** Fixed with leave-one-event-out
+  cross-validation (`app/models/evaluate_ml_loeo.py`, new 2026-09-09):
+  pooled predictions across all 29 real events give **threshold 0.80:
+  52.7% recall / 17.95% false-positive rate — still genuinely better
+  than rules-based's 41.0% recall / 22.05% FPR on both axes**, a real but
+  smaller improvement than first claimed.
+- **A second, more serious problem found the same day: this model is
+  not currently safe to deploy against this project's own demo
+  regions.** After retraining on 100% of real data and wiring it into
+  `ml_risk_model.py`, a sanity check against the actual `regions.json`
+  sample cities showed it predicts "low" for all 10 of them — including
+  Lagos and Kampala, which the rules-based model correctly scores
+  "high". The model's real-data-calibrated notion of "elevated" (rare in
+  26 years of confirmed floods) doesn't match the hand-picked demo
+  river-level values, which were tuned to look sane against the
+  rules-based formula instead. **Reverted** back to the original
+  synthetic-trained `ml_risk_model.py`/`ml_risk_model.pkl` — production
+  is unaffected by any of this work. See `docs/progress-log.md`'s
+  2026-09-09 correction entry and `docs/AfriShield-ML-Evolution-Guide.pdf`
+  for the full story (the PDF still needs a correction pass to match).
 - See [`../docs/architecture.md`](../docs/architecture.md)'s "Two risk
   scores, on purpose" section for why both are kept side by side.
 

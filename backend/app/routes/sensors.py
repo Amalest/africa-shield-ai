@@ -1,5 +1,6 @@
 import hmac
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
@@ -11,6 +12,29 @@ from app.routes.risk import RiskCheckResponse, build_risk_check_response
 router = APIRouter()
 
 DEVICES_FILE = Path(__file__).resolve().parent.parent / "data" / "devices.json"
+SENSOR_READINGS_FILE = Path(__file__).resolve().parent.parent / "data" / "sensor_readings.json"
+
+# Keep only the most recent readings across all devices — this is an
+# operator-visibility log (see GET /api/admin/devices), not a scientific
+# archive, so an unbounded file isn't worth the disk growth.
+MAX_LOGGED_READINGS = 1000
+
+
+def _log_sensor_reading(device_id: str, response: RiskCheckResponse) -> None:
+    readings = json.loads(SENSOR_READINGS_FILE.read_text(encoding="utf-8")) if SENSOR_READINGS_FILE.exists() else []
+    readings.append(
+        {
+            "device_id": device_id,
+            "location_name": response.location_name,
+            "rainfall_mm_24h": response.rainfall_mm_24h,
+            "river_level_m": response.river_level_m,
+            "risk_level": response.risk_level,
+            "risk_score": response.risk_score,
+            "received_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        }
+    )
+    readings = readings[-MAX_LOGGED_READINGS:]
+    SENSOR_READINGS_FILE.write_text(json.dumps(readings, indent=2), encoding="utf-8")
 
 
 class SensorReadingRequest(BaseModel):
@@ -60,12 +84,14 @@ def sensor_reading(payload: SensorReadingRequest) -> RiskCheckResponse:
     that field appears.
 
     If this reading pushes the device's region into "high" risk for the
-    first time (not just "still high" from the last reading), this also
-    automatically sends a real SMS to that region's subscribers — see
-    `maybe_auto_trigger()` in `app/routes/alerts.py` for the exact
-    once-per-transition logic and why `/api/risk-check` doesn't do this
-    too. A failure here never breaks the sensor-reading response itself;
-    the reading is still scored and returned either way."""
+    first time (not just "still high" from the last reading), this puts
+    a real community alert up for operator review (notifying admins by
+    SMS) rather than sending it immediately — see `maybe_auto_trigger()`
+    in `app/routes/alerts.py` and `app/routes/pending_alerts.py` for the
+    once-per-transition logic, the review workflow, and why
+    `/api/risk-check` doesn't do this too. A failure here never breaks
+    the sensor-reading response itself; the reading is still scored and
+    returned either way."""
     devices = json.loads(DEVICES_FILE.read_text(encoding="utf-8")) if DEVICES_FILE.exists() else []
     device = next((d for d in devices if d["device_id"] == payload.device_id), None)
     if device is None:
@@ -80,5 +106,12 @@ def sensor_reading(payload: SensorReadingRequest) -> RiskCheckResponse:
         payload.rainfall_mm_24h,
         payload.river_level_m,
     )
-    maybe_auto_trigger(device["location_name"], response.risk_level)
+    _log_sensor_reading(payload.device_id, response)
+    maybe_auto_trigger(
+        device["location_name"],
+        response.risk_level,
+        response.rainfall_mm_24h,
+        response.river_level_m,
+        response.risk_score,
+    )
     return response

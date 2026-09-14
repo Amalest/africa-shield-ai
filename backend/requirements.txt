@@ -10,3 +10,4 @@ firebase-admin>=6.5
 bcrypt>=4.0
 pyjwt>=2.8
 email-validator>=2.0
+pytest>=8.0

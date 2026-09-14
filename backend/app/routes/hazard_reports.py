@@ -7,6 +7,9 @@ from fastapi import APIRouter, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
+from app.models.sms_gateway import is_configured as is_sms_configured, send_sms
+from app.routes.alerts import _send_channel
+
 router = APIRouter()
 
 HAZARD_REPORTS_FILE = Path(__file__).resolve().parent.parent / "data" / "hazard_reports.json"
@@ -42,6 +45,13 @@ class HazardReportRequest(BaseModel):
     needs_assistance: bool = False
     latitude: float | None = Field(default=None, allow_inf_nan=False)
     longitude: float | None = Field(default=None, allow_inf_nan=False)
+    # Optional, and never echoed back in HazardReportResponse (see below) —
+    # purely so this specific reporter can be reached again: a submission
+    # confirmation now, and a status-update SMS later if an operator
+    # assigns or resolves this report (see app/routes/admin_reports.py).
+    # Without it, a citizen who reports "I'm trapped" has no way to know
+    # anyone ever saw it.
+    phone_number: str | None = None
 
 
 class HazardReportResponse(BaseModel):
@@ -150,6 +160,7 @@ def create_hazard_report(payload: HazardReportRequest) -> HazardReportResponse:
         "needs_assistance": payload.needs_assistance,
         "latitude": payload.latitude,
         "longitude": payload.longitude,
+        "phone_number": payload.phone_number,
         "submitted_at": now,
         "has_photo": False,
         # Incident-management fields — see app/routes/admin_reports.py.
@@ -162,9 +173,44 @@ def create_hazard_report(payload: HazardReportRequest) -> HazardReportResponse:
         "assigned_to": None,
         "assigned_by": None,
         "responses": [],
+        "reporter_notifications": [],
     }
+    if entry["phone_number"]:
+        message = (
+            f"AfriShield: We received your request for help near {entry['location_name']}. "
+            "A responder has been notified and will follow up as soon as possible."
+            if entry["needs_assistance"]
+            else f"AfriShield: We received your hazard report near {entry['location_name']}. "
+            "Thank you for helping keep your community informed."
+        )
+        entry["reporter_notifications"].append(notify_reporter(entry["phone_number"], message))
+
     _append_report(entry)
     return HazardReportResponse(**entry)
+
+
+def notify_reporter(phone_number: str, message: str) -> dict:
+    """Best-effort SMS to the person who filed a report — used for the
+    submission confirmation above, and reused by
+    `app/routes/admin_reports.py` for a status-update SMS when an
+    operator assigns or resolves that report. Returns a log entry
+    (`{message, status, sent_at}`) for the caller to append into that
+    report's `reporter_notifications` — this function does no file I/O
+    itself, so callers who already have the report loaded (and are about
+    to write it back anyway) don't risk a lost update from two separate
+    read-modify-write cycles racing each other.
+
+    Never raises — a failed/unconfigured send just gets logged with a
+    `"failed"`/`"simulated"` status, exactly like every other channel in
+    this project (see `_send_channel` in `app/routes/alerts.py`).
+
+    English only for now — the alert-broadcast messages elsewhere in this
+    project are localized (see `app/models/translations.py`), but that
+    machinery is built around a region's risk level, not a one-off
+    reporter notification. Worth doing the same for these eventually, not
+    done yet."""
+    status = _send_channel(is_sms_configured(), [phone_number], lambda: send_sms([phone_number], message))
+    return {"message": message, "status": status, "sent_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}
 
 
 @router.post("/api/hazard-reports/{report_id}/photo", response_model=HazardReportResponse)

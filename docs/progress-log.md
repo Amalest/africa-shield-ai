@@ -5,7 +5,83 @@ first for current state; scroll down for history.
 
 ---
 
+## 2026-09-09 (later still) — Correction: the real-data ML numbers were leaked, and the fixed model isn't safe to deploy
+
+**This corrects the entry immediately below — read this one first.** Two
+real problems found while trying to actually ship what that entry
+described, both caught before either one reached production.
+
+### Problem 1: the 81.2%/62.5% numbers had a real leakage bug
+DFO flood events span multiple consecutive days, and the training data
+labels every day in an event's range. The random *row-level* train/test
+split used below could put some days of one event in training and other
+days of that SAME event in testing — the model could partly "recognize"
+an event it had already seen pieces of, rather than genuinely
+generalizing. Checked directly (`app/models/check_split_leakage.py`):
+**19 of 29 real events had days on both sides of the split** — the
+majority. Fixed properly with leave-one-event-out cross-validation
+(`app/models/evaluate_ml_loeo.py`) — every one of the 29 real, usable
+events held out and tested exactly once, predictions pooled across all
+29 folds. **Corrected, trustworthy result: at threshold 0.80, 52.7%
+recall / 17.95% false-positive rate — still genuinely better than
+rules-based (41.0% recall / 22.05% FPR) on both axes**, just a smaller
+margin than the leaked numbers claimed.
+
+### Problem 2: the corrected model still isn't safe to deploy — a real calibration mismatch with the demo's own regions
+Retrained a final model on 100% of the real usable data and wired it
+into `ml_risk_model.py` at threshold 0.80 — then, before calling it
+done, tested it against the actual `app/data/regions.json` sample
+cities (not just the DFO test data) as a sanity check. **It predicted
+"low" for all 10 demo cities, including Lagos and Kampala, which the
+rules-based model correctly scores as "high" (0.82 and 0.89).** Root
+cause: the model's training feature (a real discharge percentile scaled
+onto the same 0-4m range as `river_level_m`) reflects how rare *actual
+confirmed floods* are in 26 years of real history (239 of 40,904 days,
+0.58%) — so the model's real-data-calibrated notion of "elevated" turns
+out to be much more extreme than the hand-picked `regions.json` values,
+which were tuned to "look sane" against the rules-based formula's 50/50
+blend, not against this model's learned distribution. Two different
+scales that happen to share the same 0-4 numeric range are not the same
+scale.
+
+**Reverted immediately** (`git checkout` on `ml_risk_model.py` and
+`ml_risk_model.pkl`, confirmed back to the original synthetic-trained
+model and its normal output) rather than shipping something that would
+have made the ML "second opinion" look broken to judges in the actual
+demo. The LOEO-CV finding above is still real and worth citing (a
+genuine, validated improvement exists when the model sees inputs from
+the same distribution it was trained on) — it just isn't safely
+deployable against this project's specific hand-picked demo inputs
+without more work.
+
+### Current honest status
+- Production (`ml_risk_model.py`) is unchanged — still the original
+  synthetic-trained model, unaffected by any of this.
+- The real-data-trained model, LOEO-CV-validated at 52.7% recall / 17.95%
+  FPR vs. rules-based's 41.0%/22.05%, remains a genuine finding but is
+  **not deployed and not currently deployable** without resolving the
+  calibration mismatch above.
+- `app/models/train_ml_model_real.py`, `tune_ml_threshold.py`,
+  `check_split_leakage.py`, and `evaluate_ml_loeo.py` are all real,
+  working, and kept for this reason — the analysis is sound, the
+  deployment isn't ready.
+- **`docs/AfriShield-ML-Evolution-Guide.pdf` and this file's entry below
+  still state the leaked 81.2%/62.5% numbers and don't mention the
+  calibration mismatch — due for a correction pass.**
+- **Next step for anyone continuing this**: either recalibrate the
+  demo's `regions.json` sample values to be consistent with real
+  discharge percentiles for each city (a data-honesty question, not just
+  a code one), or find a genuine way to reconcile the two scales, before
+  attempting to deploy a real-data-trained model against this project's
+  own demo inputs again.
+
+---
+
 ## 2026-09-09 (later same day) — ML model retrained on real data, then threshold-tuned to beat the rules-based model
+
+**Correction posted above, same day — the recall/FPR numbers in this
+entry have a leakage bug, and the resulting model was found unsafe to
+deploy. Read the entry above this one first.**
 
 Real, meaningful follow-up to the 2026-08-29 DFO validation work — that
 session only used real data to *check* the existing models; this one

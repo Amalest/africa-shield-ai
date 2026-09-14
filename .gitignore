@@ -5,6 +5,7 @@ __pycache__/
 .venv/
 venv/
 *.log
+.pytest_cache/
 
 # Node
 node_modules/
@@ -26,6 +27,8 @@ backend/app/data/hazard_report_photos/
 backend/app/data/admins.json
 backend/app/data/revoked_jtis.json
 backend/app/data/pending_subscriber_verifications.json
+backend/app/data/pending_alerts.json
+backend/app/data/sensor_readings.json
 
 # Compiled sketch binaries -- rebuild locally, don't commit
 hardware/*/build/

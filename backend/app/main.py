@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.config import CORS_ALLOWED_ORIGINS
-from app.routes import admin_auth, admin_reports, alerts, hazard_reports, push_tokens, regions, risk, sensors, subscribers, ussd, voice
+from app.routes import admin_auth, admin_devices, admin_reports, alerts, hazard_reports, pending_alerts, push_tokens, regions, risk, sensors, subscribers, ussd, voice
 
 app = FastAPI(
     title="Africa Shield AI - Last-Mile Alert API",
@@ -36,10 +36,14 @@ app = FastAPI(
         "'Subscribe' menu); DELETE /api/subscribers/{phone_number} (also requires "
         "a fresh code) unregisters one — both require proof of phone ownership so "
         "nobody can subscribe or unsubscribe a number that isn't theirs. "
-        "POST /api/admin/signup (requires a shared ADMIN_SIGNUP_CODE) and "
-        "POST /api/admin/login create/authenticate an AfriShield Admin Command "
-        "Center account, returning a bearer token; every /api/admin/* route below "
-        "requires it. POST /api/admin/logout revokes the calling token immediately. "
+        "POST /api/admin/signup (requires a shared ADMIN_SIGNUP_CODE, and only works "
+        "once — permanently locked once any admin account exists) creates the very "
+        "first AfriShield Admin Command Center account. Every admin after that is "
+        "created by an existing admin via POST /api/admin/admins (also lists them: "
+        "GET /api/admin/admins) — there is no public self-service signup. "
+        "POST /api/admin/login authenticates, returning a bearer token; every "
+        "/api/admin/* route below requires it. POST /api/admin/logout revokes the "
+        "calling token immediately. "
         "GET /api/admin/dashboard/stats, "
         "GET /api/admin/incidents/prioritized (AI triage, ranked, with an "
         "explainable factor breakdown), GET /api/admin/incidents/map, "
@@ -49,7 +53,17 @@ app = FastAPI(
         "POST /api/admin/incidents/{id}/response (sms/voice/radio/community_leader), "
         "and GET /api/admin/incidents/{id}/responses cover incident management for "
         "the admin dashboard, built on top of the same hazard-report records as "
-        "POST/GET /api/hazard-reports above."
+        "POST/GET /api/hazard-reports above. "
+        "GET /api/admin/devices lists registered flood sensors with their most "
+        "recent reading and an online/offline status. "
+        "A sensor reading that crosses into 'high' risk no longer auto-sends a "
+        "community alert — it creates a pending alert instead (operators are "
+        "notified by SMS) and auto-sends only if nobody reviews it in time: "
+        "GET /api/admin/alerts/pending (awaiting review), "
+        "GET /api/admin/alerts/pending/history (every outcome, for audit), "
+        "POST /api/admin/alerts/{id}/approve, "
+        "POST /api/admin/alerts/{id}/edit-and-send (operator-edited wording), and "
+        "POST /api/admin/alerts/{id}/reject (requires a reason) resolve one."
     ),
     version="0.1.0",
 )
@@ -87,6 +101,8 @@ app.include_router(push_tokens.router)
 app.include_router(subscribers.router)
 app.include_router(admin_auth.router)
 app.include_router(admin_reports.router)
+app.include_router(pending_alerts.router)
+app.include_router(admin_devices.router)
 
 
 @app.exception_handler(RequestValidationError)

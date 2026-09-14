@@ -219,27 +219,43 @@ Presentation & Pitch 5.
       flood-label source to layer on top — DFO's own archive stops
       there.
 - [x] **The "not a full retrain" blocker above turned out to be
-      solvable, 2026-09-09.** The discharge-percentile approximation
-      `validate_against_dfo.py` already used for evaluation works just
-      as well as a training feature — trained a new model on it
-      (`app/models/train_ml_model_real.py`) and got real improvement:
-      81.2% recall on a held-out real test split vs. the old synthetic
-      model's 27.1% and rules-based's 47.9% on that same split.
-      Threshold-tuned it further (`app/models/tune_ml_threshold.py`):
-      **at threshold 0.80, 62.5% recall / 17.69% false-positive rate —
-      beats rules-based on both axes, not a trade-off.** See
-      `docs/progress-log.md`'s 2026-09-09 (later) entry and
-      `docs/AfriShield-ML-Evolution-Guide.pdf` for the full story.
-- [ ] **Wire the tuned real-data model into production** —
-      `ml_risk_model.py` still loads the old synthetic-trained
-      `ml_risk_model.pkl` with the severity-blend decision logic, not
-      `ml_risk_model_real.pkl` with the 0.80 threshold. Needs: swap the
-      loaded file, change `predict_ml_risk()` to threshold-based logic,
-      re-verify `POST /api/risk-check`/`GET /api/regions` afterward. Also
-      needs a team decision on which threshold to actually ship — 0.80
-      (beats rules-based outright, the easy pick) vs. 0.55 (catches 87.5%
-      of floods but with a real false-alarm cost) — not just a technical
-      choice.
+      solvable, 2026-09-09** — then the first attempt's numbers turned
+      out to have a leakage bug, caught and fixed the same day. The
+      discharge-percentile approximation `validate_against_dfo.py`
+      already used for evaluation works just as well as a training
+      feature (`app/models/train_ml_model_real.py`), but the initial
+      random row-level train/test split let days from the same
+      multi-day flood event land on both sides (19 of 29 events, 65%,
+      confirmed affected) — inflating the first "81.2% recall" claim.
+      Fixed with leave-one-event-out cross-validation across all 29 real
+      events (`app/models/evaluate_ml_loeo.py`): the trustworthy, pooled
+      result is **threshold 0.80: 52.7% recall / 17.95% false-positive
+      rate — still genuinely better than rules-based's 41.0% recall /
+      22.05% FPR on both axes**, just a smaller margin than first
+      thought. See `docs/progress-log.md`'s 2026-09-09 correction entry.
+- [x] **Attempted to wire the real-data model into production,
+      2026-09-09 — reverted after finding it's not safe to ship.**
+      Retrained on 100% of real data and swapped it into
+      `ml_risk_model.py`, then sanity-checked it against the actual demo
+      `regions.json` cities before calling it done: it predicted "low"
+      for **all 10 demo cities**, including Lagos and Kampala, which the
+      rules-based model correctly flags "high". Cause: the model's
+      real-world-calibrated discharge percentile treats "elevated" as far
+      more extreme than the hand-picked demo river-level values, which
+      were tuned to look sane against the rules-based 50/50 formula, not
+      against this model's learned distribution — a genuine calibration
+      mismatch, not a code bug. **Reverted** `ml_risk_model.py`/
+      `ml_risk_model.pkl`/`train_ml_model.py` to the original
+      synthetic-trained model via `git checkout`; production is
+      unaffected. See `docs/progress-log.md`'s 2026-09-09 correction
+      entry for the full story.
+- [ ] **Open, unsolved: reconcile the real-data model with the demo's
+      region values before attempting to deploy it again.** Either
+      recalibrate `regions.json`'s sample rainfall/river-level numbers to
+      be consistent with real discharge percentiles per city, or find
+      another way to bridge the two scales. Until then, production stays
+      on the original synthetic-trained model — do not re-attempt the
+      swap without solving this first.
 - [x] **Native-speaker review of Swahili, Arabic, and Somali alert
       wording — all 3 confirmed correct (2026-08-17).** Also added
       city-name localization per the reviewers' feedback (e.g. "Cairo" →

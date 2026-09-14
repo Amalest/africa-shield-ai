@@ -58,3 +58,12 @@ USSD_WEBHOOK_PASSWORD = os.environ.get("USSD_WEBHOOK_PASSWORD")
 # Defaults to "*" (any origin) for local development if unset — see the
 # startup warning in app/main.py.
 CORS_ALLOWED_ORIGINS = os.environ.get("CORS_ALLOWED_ORIGINS")
+
+# NASA Earthdata Login bearer token — used by app/models/fetch_swot_river_levels.py
+# to pull real river water-surface-elevation readings (SWOT satellite
+# altimetry) for cross-checking regions.json's river_level_m values
+# against actual measurements. Generate one at
+# https://urs.earthdata.nasa.gov (log in -> "Generate Token"), valid for
+# 60 days. Optional — that script explains clearly what it can't do
+# without one, rather than failing with an unrelated error.
+EARTHDATA_TOKEN = os.environ.get("EARTHDATA_TOKEN")

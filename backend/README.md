@@ -200,10 +200,11 @@ shapes. Summary:
   rules-based score as a comparison, not a replacement. Loads
   `ml_risk_model.pkl` at import time — that file is committed to the repo
   so the server doesn't need to retrain on every start.
-- `app/models/train_ml_model.py` — the training script that produced
-  `ml_risk_model.pkl`. Trains on **synthetic** data (clearly flagged in
-  that file's docstring) standing in for real historical flood data. Run
-  it directly to retrain: `python -m app.models.train_ml_model`.
+- `app/models/train_ml_model.py` — the training script that produces
+  `ml_risk_model.pkl`. **As of 2026-09-14, trains on real historical
+  data**, not synthetic — see below for how it got there and
+  `train_ml_model.py`'s own docstring for the full three-attempt story.
+  Run it directly to retrain: `python -m app.models.train_ml_model`.
 - `app/models/fetch_real_training_data_dfo.py` +
   `app/models/validate_against_dfo.py` — real historical flood data
   (Dartmouth Flood Observatory, 49 events across all 10 cities) paired
@@ -213,40 +214,39 @@ shapes. Summary:
   numbers. `app/models/dfo_features.py` holds the shared
   discharge-percentile-as-river-level approximation both this script and
   the one below use, so they can't silently drift apart.
-- **`app/models/train_ml_model_real.py` (new, 2026-09-09) — actually
-  retrains on that same real data**, not just validates against it.
-  Real class imbalance (239 of 40,904 rows, 0.58%, are confirmed
-  elevated-risk) handled with `class_weight="balanced"`. **Its original
-  held-out-split numbers (81.2% recall) had a train/test leakage bug —
-  see the correction below.** Saved to `ml_risk_model_real.pkl` — **not
-  wired into `ml_risk_model.py`**; production still uses the original
-  synthetic-trained model.
-- **`app/models/tune_ml_threshold.py` (new, 2026-09-09)** — sweeps the
-  real-data model's decision threshold instead of accepting the default
-  ~50% cutoff. Its first reported numbers shared the same leakage bug as
-  above — see the correction below for the trustworthy figures.
-- **Correction, same day: the row-level train/test split leaked flood
-  events across train and test (19 of 29 events, 65%, had days on both
-  sides), inflating the numbers above.** Fixed with leave-one-event-out
-  cross-validation (`app/models/evaluate_ml_loeo.py`, new 2026-09-09):
-  pooled predictions across all 29 real events give **threshold 0.80:
-  52.7% recall / 17.95% false-positive rate — still genuinely better
-  than rules-based's 41.0% recall / 22.05% FPR on both axes**, a real but
-  smaller improvement than first claimed.
-- **A second, more serious problem found the same day: this model is
-  not currently safe to deploy against this project's own demo
-  regions.** After retraining on 100% of real data and wiring it into
-  `ml_risk_model.py`, a sanity check against the actual `regions.json`
-  sample cities showed it predicts "low" for all 10 of them — including
-  Lagos and Kampala, which the rules-based model correctly scores
-  "high". The model's real-data-calibrated notion of "elevated" (rare in
-  26 years of confirmed floods) doesn't match the hand-picked demo
-  river-level values, which were tuned to look sane against the
-  rules-based formula instead. **Reverted** back to the original
-  synthetic-trained `ml_risk_model.py`/`ml_risk_model.pkl` — production
-  is unaffected by any of this work. See `docs/progress-log.md`'s
-  2026-09-09 correction entry and `docs/AfriShield-ML-Evolution-Guide.pdf`
-  for the full story (the PDF still needs a correction pass to match).
+- **Getting a real-data model into production took three attempts**
+  (all documented honestly in `docs/progress-log.md`'s 2026-09-09 and
+  2026-09-14 entries, because each one taught something real):
+  1. Labeling a day "elevated" only if it fell inside a DFO-documented
+     disaster's exact date range (`train_ml_model_real.py`,
+     `evaluate_ml_loeo.py`) trains on real data, but DFO only catalogs
+     headline, reported disasters — the resulting model learned a
+     backwards relationship (more rainfall predicting *lower* risk)
+     exactly in the "obviously severe" corner of input space, and
+     predicted "low" for all 10 demo cities including Lagos. Caught
+     before shipping, reverted.
+  2. Annual-maxima return periods (`return_period_features.py`, kept as
+     the record) turned out far stricter than DFO's real disasters
+     actually reach — only 4.2% crossed even a 2-year threshold computed
+     this way.
+  3. **What worked**: relabel using a discharge-percentile cutoff
+     calibrated via Youden's J against real DFO-confirmed days
+     (`app/models/calibrated_percentile_labels.py`), instead of an exact
+     date match or a block-maxima statistic. Multi-day rainfall
+     accumulation (`accumulation_features.py`) was tried as a way to
+     raise the ceiling further and didn't move it — river discharge
+     already integrates upstream rainfall better than a city's own point
+     rainfall history can.
+- **Current production numbers**, leave-one-event-out cross-validated
+  with the percentile threshold itself recalibrated inside every fold
+  (`app/models/evaluate_calibrated_loeo.py`) — no leakage: **76.6%
+  recall vs. rules-based's 41.0%, at ~35.8% false-positive rate vs.
+  rules-based's 22.05%.** This is a real, disclosed trade-off, not a
+  free win on both axes — the false-positive rate never drops below
+  ~31% even at the strictest possible decision threshold, so don't cite
+  this as "beats rules-based outright." Checked against all 10 demo
+  `regions.json` cities: 8/10 exact match, the 2 misses each one tier
+  low (undershooting, not falsely alarming).
 - See [`../docs/architecture.md`](../docs/architecture.md)'s "Two risk
   scores, on purpose" section for why both are kept side by side.
 

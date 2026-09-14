@@ -5,6 +5,233 @@ first for current state; scroll down for history.
 
 ---
 
+## 2026-09-14 (latest) — Shipped a real-data ML model to production. Third attempt was the one that worked.
+
+**`ml_risk_model.pkl` now runs a real-data-trained model in production**,
+replacing the original synthetic-trained one. This is the payoff of the
+investigation across this whole day's earlier entries — worth reading
+those first for the two attempts that didn't work, since understanding
+why they failed is what made this one succeed.
+
+**The fix that actually worked**: relabel training days using a
+discharge-percentile threshold *calibrated to best match real
+DFO-confirmed disasters* (Youden's J, not a guessed round number),
+instead of requiring an exact date-match to DFO's sparse disaster
+catalog. See `app/models/calibrated_percentile_labels.py` for the full
+reasoning. Two calibrated cutoffs, both fit by sweeping every candidate
+percentile against real ground truth:
+- **Medium tier: 61.5th percentile** — best separates any DFO-confirmed
+  day from an ordinary day (Youden's J = 0.495: 85.4% recall, 35.9% FPR
+  against all non-DFO days).
+- **High tier: 80.7th percentile** — best separates DFO's own
+  high-severity days from its medium-severity days (Youden's J = 0.206 —
+  much weaker separation; severity likely depends on exposure/damage
+  factors this dataset doesn't capture, not just discharge magnitude).
+
+**Also tried and ruled out first, honestly, before this**:
+multi-day rainfall accumulation (`app/models/accumulation_features.py`)
+as a way to raise the separability ceiling — cross-validated AUC stayed
+flat at ~0.81 whether same-day rainfall, discharge percentile, or 3-day/
+7-day rainfall accumulation was used, alone or combined. River discharge
+already integrates upstream rainfall across the whole basin better than
+one city's own point rainfall history can reconstruct — confirmed
+empirically, not assumed.
+
+**Validated with the same rigor as everything else this project ships**:
+- Leave-one-event-out cross-validation (`app/models/evaluate_calibrated_loeo.py`),
+  with the percentile thresholds themselves **recalibrated inside every
+  fold** (using only that fold's training rows) — closing the same class
+  of leakage bug this project already caught once this session, applied
+  here to the threshold-fitting step, not just the row split. Fold-to-fold
+  cutoffs came back essentially identical (medium 0.610 ± 0.000, high
+  0.820 ± 0.004) — a stable, real signal, not fold-specific noise.
+- **Result: ~76.6% recall vs. rules-based's 41.0%, at ~35.8% false-positive
+  rate vs. rules-based's 22.05%.** This is a genuine, honestly-measured
+  improvement in catching real floods — but it is **a trade-off, not a
+  free win on both axes**: swept every threshold from 0.05 to 0.995 and
+  the false-positive rate never drops below ~31%, even at the strictest
+  possible cutoff. Say this plainly whenever these numbers are cited —
+  the earlier (leaked) claim of "beats rules-based on both axes" from
+  the first real-data attempt does not hold here, and shouldn't be
+  repeated.
+- Checked the exact failure mode that blocked the first two attempts:
+  fed the model `rainfall=90mm, river=3.95m` and `rainfall=5mm,
+  river=3.95m` — both now correctly score "high" with high confidence.
+  The backwards rainfall coefficient is gone.
+- Checked against all 10 demo `regions.json` cities (the specific check
+  that caught the very first attempt's failure): **8/10 exact match**
+  with the rules-based label. The two misses (Cairo: rules says medium,
+  ML says low; Dar es Salaam: rules says high, ML says medium) are each
+  one tier low, not a wild swing in either direction, and both undershoot
+  rather than falsely alarm — consistent with a genuine "second opinion"
+  that's expected to sometimes disagree on borderline cases, not a
+  broken model. Verified on a fully clean backend restart after an
+  earlier stale-server read gave a misleading 10/10 (pickled models load
+  once at import time; overwriting the `.pkl` file does not itself
+  trigger `--reload`, which only watches `.py` files — worth remembering
+  if this ever needs retraining again while the server is running).
+- Full `pytest` suite (70 tests) still green; `/api/risk-check`,
+  `/api/regions`, `/api/sensor-reading`, and the pending-alert pipeline
+  all manually re-verified end-to-end against the new model.
+
+**Kept, not deleted, as the honest record of what didn't work**:
+`return_period_features.py` (annual-maxima return periods — too strict,
+only 4.2% of real disasters crossed even a 2-year threshold computed
+this way) and `accumulation_features.py` (multi-day rainfall — didn't
+move the separability ceiling). Both are real, working code with
+real findings, just not the answer.
+
+---
+
+## 2026-09-14 (later) — Tried NASA SWOT satellite data against the 10 demo cities: one real hit, one near-miss, eight "too small a river"
+
+Followed up on the data-source research below — got a NASA Earthdata
+account and `EARTHDATA_TOKEN`, installed `earthaccess` + `geopandas`,
+and wrote `app/models/fetch_swot_river_levels.py` to search for real
+SWOT satellite river-height readings near all 10 demo cities.
+
+**First pass was misleading**: picking the "most recent" granule per
+city looked like it found coverage everywhere, but every single city
+came back "no valid reading" — because SWOT's river product ships as
+one file per (continent, orbital pass), and CMR's own bounding-box
+metadata for these files is a crude rectangle spanning the file's ENTIRE
+multi-thousand-km swath (confirmed directly: one granule's stated box
+ran from the equator to 66°N). A city falling inside that huge box says
+nothing about whether an actual river reach exists nearby in that
+specific file — recency was irrelevant; what mattered was which of many
+different orbital ground tracks actually passes near the city at all.
+
+**Fixed by trying up to 15 distinct orbital passes per city** (not just
+the newest file) and reporting the genuinely closest valid reading found,
+honestly, rather than the first thing that technically matched:
+
+- **Kinshasa: a real, trustworthy hit.** Congo river, 248.24m water
+  surface elevation, ~12km from the city center. This is a real,
+  usable calibration anchor.
+- **Cairo: a real but distant hit, consistent across 15 independent
+  passes.** Nile (Rosetta Branch), ~46km away every single time —
+  strongly suggesting that's genuinely where the nearest SWOT-defined
+  reach sits relative to that exact coordinate, not a search miss. Also
+  surfaced a real data-quality wrinkle: the same reach reported values
+  from 0.01m to 10.14m across nearby dates — some of those are almost
+  certainly low-quality retrievals that the fill-value filter alone
+  doesn't catch (a real production use of this data would need to also
+  check the `reach_q` quality flag, not just filter the `-1e12` fill
+  sentinel, which this script doesn't do yet).
+- **The other 8 cities (Lagos, Nairobi, Accra, Kampala, Maputo, Dar es
+  Salaam, Mogadishu, Addis Ababa): closest valid readings were 130-560km
+  away**, no closer across every pass tried. Their actual local
+  waterways (lagoons, small urban rivers) are almost certainly narrower
+  than SWOT's ~100m minimum resolvable width — a real geographic limit,
+  not a bug to keep chasing.
+
+**Conclusion: SWOT is real and valuable, but only as a spot-check for 1
+(maybe 2) of the 10 demo cities, not a comprehensive fix.** It won't
+single-handedly solve the calibration/label-quality problem from the
+entry below for every city. Worth keeping as a genuine, cited data point
+for Kinshasa specifically; not worth further investment chasing the
+other 8 without a fundamentally different approach (e.g. a river
+database with narrower/urban waterway coverage). The feedback-loop
+pipeline below remains the actual path that scales to all cities over
+time, since it doesn't depend on satellite resolution limits at all.
+
+---
+
+## 2026-09-14 — Found the *real* reason the real-data model isn't deployable (it's not just calibration), built a feedback-loop pipeline, and surveyed real data sources
+
+Went looking for a fix to the calibration mismatch from 2026-09-09's
+entry below — tried recalibrating `regions.json`'s `river_level_m`
+values to match the model's learned percentile scale
+(`app/models/calibrate_demo_regions.py`) instead of the threshold. That
+search failed for 6 of the 10 demo cities, and digging into why turned
+up something more fundamental than a scale problem.
+
+**The real issue: the model's fitted coefficients are unreliable exactly
+in the "obviously severe" corner of input space.** Checked the model
+directly at extreme inputs: `rainfall=90mm, river=3.95m` (out of a 4m
+cap) scores only 6% "high" / 62% "medium"; `rainfall=5mm, river=3.95m`
+scores 54% "high". Same near-maximum river reading, and *less* rainfall
+scores as more severe. Traced this to the training data itself: of the
+50 real training days that combined >50mm rainfall with a >90th-
+percentile river reading, **49 of 50 are labeled "low."** Not because
+those days were safe — because DFO only catalogs headline, newsworthy
+disasters, so a day with severe-looking conditions but no internationally
+reported disaster gets labeled exactly the same as a calm day. The model
+is accurately learning "will this become a named disaster," which is a
+different, sparser target than "is this actually risky" — and that gap
+happens to land squarely on the demo's own input range. Recalibrating
+`regions.json`'s values wouldn't fix this; the label source itself is
+the limitation. **Conclusion: this model still isn't safe to deploy, for
+a different and better-understood reason than 2026-09-09's finding.**
+`calibrate_demo_regions.py` is kept as the record of this investigation,
+not as a working fix.
+
+**Built instead: real infrastructure to grow past DFO's label-sparsity
+problem** (`app/models/build_feedback_dataset.py`, `app/routes/
+pending_alerts.py`'s approve/reject workflow from earlier this week).
+Every pending alert an operator resolves — approve/auto-sent means
+"confirmed elevated," reject with reason `false_positive`/`sensor_fault`
+means "confirmed safe" — becomes a labeled row, in the system's real
+operational units (whatever a sensor actually reports), not DFO's
+discharge-percentile proxy. That sidesteps the calibration-mismatch
+problem entirely, since it's the same scale live sensors and
+`regions.json` already use. **Honestly: a brand-new deployment has ~0
+resolved alerts today.** The script is real, tested (`backend/tests/
+test_build_feedback_dataset.py`), and refuses to pretend a trainable
+model exists before there's enough data (currently gated at 30+ rows,
+8+ per class) — it's infrastructure for after the system has real
+operational history, not a working model today.
+
+**Production is unchanged.** `ml_risk_model.py` still loads the original
+synthetic-trained model. No production code was touched by this
+investigation.
+
+**Real data source research**, for filling the actual gap (a denser,
+more recent, better-labeled real ground truth than DFO's sparse
+disaster catalog):
+
+- **NASA SWOT** (Surface Water and Ocean Topography, launched 2022, data
+  released March 2024) — the most promising find. Measures actual river
+  water *surface elevation* by satellite altimetry (real height in
+  meters, not a discharge proxy) for rivers wider than ~100m, globally,
+  released via NASA Earthdata. Account creation is instant and free
+  (`https://urs.earthdata.nasa.gov/users/new`). Revisit per location is
+  roughly every 11-21 days (not daily), so it won't replace the daily
+  rainfall/discharge pipeline, but a handful of real altimetry readings
+  for the demo's rivers (Niger at Lagos, Nile at Cairo, Congo at
+  Kinshasa) would be a genuinely strong data point to cite, and a real
+  long-term path to a level-in-meters feature that isn't a proxy.
+  **Recommended: create this account.**
+- **Google Flood Hub / Flood Forecasting API** — real per-gauge flood
+  forecasts with return-period-based severity across 40+ African
+  countries; would likely solve this exact problem outright. Access is
+  waitlisted, and Google states it can take **several months** — not
+  viable before the hackathon, but free to apply for now and worth
+  having in progress. **Recommended: apply now, expect nothing before
+  the hackathon.**
+- **GRDC** (Global Runoff Data Centre, WMO) — the highest-quality real
+  river-gauge discharge archive that exists, including a dedicated
+  Southern Africa flow database. Requires registration and explicit
+  acceptance of data-sharing terms, reviewed manually (turnaround not
+  officially published; not same-day). Would still only give discharge,
+  not level in meters, so it wouldn't fix the core problem by itself —
+  useful mainly as a higher-quality replacement for the Open-Meteo/
+  GloFAS discharge feed already in use. **Lower priority.**
+- **UNOSAT / Sentinel-1 SAR rapid flood mapping** — real, recent (post-
+  2020s) satellite-derived flood extent maps published per actual
+  disaster event, often with no account needed at all (published as
+  open rapid-mapping products, e.g. via ReliefWeb/HDX). Would help with
+  the "DFO stops too early" gap by adding recent events, but matching a
+  flood-extent polygon to a specific city/date/rainfall reading is
+  manual cross-referencing work, not an API integration.
+- Considered and deprioritized: **Copernicus CDS/GloFAS direct** (same
+  underlying discharge data the project's existing Open-Meteo pipeline
+  already re-serves for free, no account needed — direct access adds
+  no new information); national hydromet agencies for the 10 demo
+  countries (realistically too slow to reach before the hackathon).
+
+---
+
 ## 2026-09-09 (later still) — Correction: the real-data ML numbers were leaked, and the fixed model isn't safe to deploy
 
 **This corrects the entry immediately below — read this one first.** Two

@@ -7,8 +7,14 @@ time, so the server doesn't retrain on every request or every restart.
 This runs ALONGSIDE risk_model.py's rules-based compute_risk(), not
 instead of it — see docs/architecture.md for why the team kept both.
 The rules-based score stays the primary, explainable one; this is a
-comparison/second opinion, trained on synthetic data (see
-train_ml_model.py's docstring for what a real-data upgrade would need).
+comparison/second opinion. As of 2026-09-14, trained on real historical
+data (see train_ml_model.py's docstring for the full story, including
+two earlier real-data attempts that didn't work and why) — genuinely
+better at catching real confirmed disasters than the rules-based formula
+(~76% recall vs. 41%, leave-one-event-out cross-validated), at a real,
+disclosed cost of a higher false-positive rate (~36% vs. 22%). That
+trade-off is why this stays a labeled "second opinion" alongside the
+rules-based score, not a replacement for it.
 """
 
 import pickle

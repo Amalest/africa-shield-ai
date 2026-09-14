@@ -30,6 +30,9 @@ backend/app/data/pending_subscriber_verifications.json
 backend/app/data/pending_alerts.json
 backend/app/data/sensor_readings.json
 
+# Downloaded satellite data cache -- large binaries, re-fetchable
+backend/app/data/swot_cache/
+
 # Compiled sketch binaries -- rebuild locally, don't commit
 hardware/*/build/
 

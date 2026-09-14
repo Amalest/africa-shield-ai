@@ -249,13 +249,57 @@ Presentation & Pitch 5.
       synthetic-trained model via `git checkout`; production is
       unaffected. See `docs/progress-log.md`'s 2026-09-09 correction
       entry for the full story.
-- [ ] **Open, unsolved: reconcile the real-data model with the demo's
-      region values before attempting to deploy it again.** Either
-      recalibrate `regions.json`'s sample rainfall/river-level numbers to
-      be consistent with real discharge percentiles per city, or find
-      another way to bridge the two scales. Until then, production stays
-      on the original synthetic-trained model — do not re-attempt the
-      swap without solving this first.
+- [x] **Investigated further, 2026-09-14 — it's not a calibration
+      problem, so recalibrating regions.json won't fix it.** Tried
+      exactly the recalibration this item proposed
+      (`app/models/calibrate_demo_regions.py`); it failed for 6 of 10
+      cities. Root cause: 49 of 50 real training days combining heavy
+      rainfall with a high river percentile are labeled "low", because
+      DFO only catalogs headline disasters — the model is accurately
+      learning "will this become a named disaster," a sparser and
+      different target than "is this actually risky." No amount of
+      rescaling `regions.json` fixes a label-quality problem in the
+      training data itself. See `docs/progress-log.md`'s 2026-09-14
+      entry for the full investigation. Production remains the original
+      synthetic-trained model — this needs a genuinely better label
+      source (see the new data-source research below), not a rescale.
+- [x] **NASA Earthdata account created, SWOT checked against all 10 demo
+      cities, 2026-09-14.** Real result, not comprehensive: Kinshasa
+      (Congo river) got a genuine, trustworthy real water-surface-
+      elevation reading ~12km from the city. Cairo got a real reading
+      but consistently ~46km away across 15 independent orbital passes.
+      The other 8 cities' actual local waterways are almost certainly
+      narrower than SWOT's ~100m resolution floor — real geographic
+      limit, not a search failure. Google Flood Hub API application
+      would still be worth submitting (months-long waitlist, not done
+      yet); GRDC registration deprioritized (discharge only, wouldn't
+      fix the core problem). Full writeup: `docs/progress-log.md`.
+- [x] **Fixed properly and shipped to production, 2026-09-14.** The item
+      above ("needs a genuinely better label source") is done: relabeled
+      training data using a discharge-percentile threshold calibrated
+      via Youden's J against real DFO disasters
+      (`app/models/calibrated_percentile_labels.py`) instead of DFO
+      day-matching. Leave-one-event-out CV with the threshold itself
+      recalibrated inside every fold (no leakage): **76.6% recall vs.
+      rules-based's 41.0%, at a real, disclosed cost of ~35.8% FPR vs.
+      22.05%** — a genuine trade-off, not a free win on both axes.
+      Verified the exact bug that killed the first two attempts is gone
+      (fed it `rainfall=90mm, river=3.95m` — correctly scores "high" with
+      high confidence now) and checked all 10 demo `regions.json` cities
+      on a clean backend restart: **8/10 exact match**, the 2 misses each
+      one tier low, not a wild swing. `ml_risk_model.pkl` now runs this
+      model in production. Full story, including the annual-maxima
+      return-period attempt that didn't work first: `docs/progress-log.md`'s
+      2026-09-14 entries.
+- [x] **Built a feedback-loop pipeline instead, 2026-09-14** —
+      `app/models/build_feedback_dataset.py` turns resolved pending
+      alerts (see the operator-review system below) into labeled
+      training rows in the system's own real operational units, sidestepping
+      the DFO-proxy calibration problem entirely. Tested
+      (`backend/tests/test_build_feedback_dataset.py`) and confirmed
+      working against both empty real data and synthetic data — honestly
+      reports "not enough data yet" rather than training on too little
+      (currently ~0 resolved alerts on a fresh deployment, as expected).
 - [x] **Native-speaker review of Swahili, Arabic, and Somali alert
       wording — all 3 confirmed correct (2026-08-17).** Also added
       city-name localization per the reviewers' feedback (e.g. "Cairo" →

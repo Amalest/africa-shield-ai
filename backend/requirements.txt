@@ -11,3 +11,5 @@ bcrypt>=4.0
 pyjwt>=2.8
 email-validator>=2.0
 pytest>=8.0
+earthaccess>=0.9
+geopandas>=1.0

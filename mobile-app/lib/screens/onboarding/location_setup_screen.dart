@@ -35,6 +35,8 @@ class _LocationSetupScreenState extends State<LocationSetupScreen> {
       TextEditingController(text: context.read<OnboardingProvider>().lga ?? '');
   late final _cityController =
       TextEditingController(text: context.read<OnboardingProvider>().city ?? '');
+  late final _phoneController =
+      TextEditingController(text: context.read<OnboardingProvider>().phoneNumber ?? '');
   bool _rememberLocation = false;
   final _locationService = LocationService();
   bool _locatingGps = false;
@@ -57,6 +59,7 @@ class _LocationSetupScreenState extends State<LocationSetupScreen> {
     _stateController.dispose();
     _lgaController.dispose();
     _cityController.dispose();
+    _phoneController.dispose();
     super.dispose();
   }
 
@@ -130,6 +133,17 @@ class _LocationSetupScreenState extends State<LocationSetupScreen> {
                 onTap: canPickCity ? () => _pickCity(l10n) : null,
               );
             }),
+            const SizedBox(height: 16),
+            _FieldLabel(l10n.phoneFieldLabel),
+            TextField(
+              controller: _phoneController,
+              keyboardType: TextInputType.phone,
+              decoration: InputDecoration(hintText: l10n.phoneFieldHint),
+            ),
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Text(l10n.phoneFieldNote, style: const TextStyle(color: AppColors.inkSoft, fontSize: 12)),
+            ),
             const SizedBox(height: 20),
             Row(
               children: [
@@ -252,6 +266,7 @@ class _LocationSetupScreenState extends State<LocationSetupScreen> {
           city: _cityController.text.trim().isEmpty ? null : _cityController.text.trim(),
           latitude: _gpsLatitude,
           longitude: _gpsLongitude,
+          phoneNumber: _phoneController.text.trim().isEmpty ? null : _phoneController.text.trim(),
         );
     if (!mounted) return;
     if (widget.fromSettings) {

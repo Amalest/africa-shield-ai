@@ -21,15 +21,35 @@ Presentation & Pitch 5.
 
 ## Critical — must happen before the demo
 
-- [ ] **Create a real Africa's Talking sandbox account** and fill in
-      `backend/.env` (`AT_USERNAME`, `AT_API_KEY`, `AT_VOICE_NUMBER`,
-      optionally `AT_SENDER_ID`). Free at
-      https://account.africastalking.com/. Nothing has been sent for
-      real yet — every alert so far says "(simulated)".
+- [x] **Sandbox Africa's Talking account already set up** (real
+      `AT_USERNAME`/`AT_API_KEY` in local `.env`) — `POST
+      /api/subscribers/verify/request` confirmed the API call succeeds.
+      **But deep research on 2026-09-09 found sandbox mode NEVER
+      delivers to a real phone, for SMS, Voice, or USSD, under any
+      circumstances** (confirmed directly from Africa's Talking's own
+      help center — sandbox traffic always routes to their internal
+      simulator only). An earlier claim in this project that "sandbox
+      works for real sending" was wrong and has been corrected — see
+      `docs/progress-log.md`'s 2026-09-09 entry.
+- [ ] **Create a Live app (not sandbox) and add ~$25 of real prepaid
+      credit** — the only way a real SMS/voice alert actually reaches a
+      phone. Not a subscription; billed per message (~$0.01–0.03/SMS),
+      so $25 covers 100+ real demo sends. See
+      `docs/AfriShield-Hardware-Cost-Breakdown.pdf`'s "Service Cost"
+      section. **Do this well before the 17th** — exact Live-app
+      verification/approval timelines aren't documented, so there's
+      unknown lead time risk if left to the last minute.
 - [ ] **Send a real test SMS** to a team member's own phone via
-      `POST /api/alerts/send` once credentials are set.
-- [ ] **Place a real test voice call** to a team member's own phone via
-      `POST /api/alerts/send` with `"channel": "voice"`.
+      `POST /api/alerts/send`, once on a Live app — as of 2026-09-09
+      this always sends both SMS and voice together (no more `channel`
+      choice), so this single test also covers the next item.
+- [ ] **Place a real test voice call** — now happens automatically as
+      part of the same `POST /api/alerts/send` call above, once on Live.
+- [ ] **USSD: plan to demo via Africa's Talking's own web simulator**
+      (simulator.africastalking.com), not a real phone — going live with
+      USSD needs an actual shortcode application, a bigger/slower step
+      than SMS/voice. Only pursue a real USSD channel if there's
+      confirmed approval time before the 17th.
 - [ ] **Test USSD against Africa's Talking's real sandbox simulator** —
       needs a public URL pointed at `/api/ussd`, and a sandbox USSD
       channel configured to call it. Only tested locally via raw
@@ -40,9 +60,20 @@ Presentation & Pitch 5.
       `cloudflared`'s quick tunnels (no account needed) serve `https://`
       cleanly with no redirect, verified with `curl`.
 - [ ] **Verify Africa's Talking's voice `<Say>` handles non-English text**
-      (Arabic/Swahili/Somali) acceptably — untested. If it doesn't, decide
-      a fallback (e.g. speak English instead of `alert_message_local` for
-      those regions) before the demo, not during it.
+      (Arabic/Swahili/Somali/Amharic) acceptably — still genuinely
+      untested as of 2026-09-09; research confirmed `<Say>` uses Google
+      Cloud TTS underneath, but couldn't get a reliable answer on
+      whether Swahili/Somali/Amharic voices actually exist there. **For
+      the presentation itself, decided to demo in French** — it's a
+      well-established Google TTS language (near-zero voice risk),
+      Latin-script (safe for USSD's known Arabic-encoding blank-screen
+      issue too), and still tells a real localization story (matches
+      Kinshasa/DRC, one of the 10 sample cities, and Côte d'Ivoire, one
+      of Africa's Talking's actual live-covered countries). Swahili was
+      considered too (ties to 3 of AT's live countries directly) but
+      rejected for the live demo specifically due to this same unverified
+      voice-support risk — worth testing separately, just not gambling
+      on it in front of judges.
 - [ ] **Run the Wokwi ESP32 simulation against a real, locally running
       backend — backend side fully proven 2026-08-29, one step left.**
       `hardware/wokwi-flood-sensor/sketch.ino` now uses
@@ -65,6 +96,13 @@ Presentation & Pitch 5.
 
 - [x] Voice alerts for people a text channel doesn't reach (can't read,
       local script, or visually impaired) — built 2026-08-17.
+- [x] **Voice made additive, not opt-in, 2026-09-09.** Voice used to only
+      go out if an admin picked `"channel": "voice"` on a given send —
+      meaning the accessibility benefit depended on someone else
+      remembering to choose it, not on the recipient's actual need. Now
+      every `POST /api/alerts/send` sends both SMS and voice to every
+      subscriber, always (same additive pattern push already used). See
+      `docs/progress-log.md`'s 2026-09-09 entry.
 - [x] **Women and children — the two named groups nothing had been
       deliberately designed for — addressed 2026-08-20.** High-risk
       alerts (all 7 languages) now include a safety-priority line naming
@@ -93,6 +131,27 @@ Presentation & Pitch 5.
       `docs/progress-log.md`'s 2026-09-07 entry. **Not done yet: the
       frontend dashboard isn't wired to any of it** — that's the next
       step, on Habiba's side.
+- [x] **Security audit + fixes (2026-09-07, later same day): 5 high +
+      3 medium severity gaps found and closed.** Admin signup previously
+      had no gate (fixed: shared `ADMIN_SIGNUP_CODE` required);
+      `ADMIN_JWT_SECRET` had a fixed, public fallback (fixed: real random
+      secret per process start + token revocation/logout); sensor
+      ingestion had no auth (fixed: per-device `device_key`); subscribing
+      *and unsubscribing* a phone number had zero ownership check (fixed:
+      one-time SMS verification code, `POST /api/subscribers/verify/request`);
+      the USSD webhook trusted any caller (fixed: optional HTTP Basic
+      Auth). Plus: the admin response endpoint could message arbitrary
+      numbers (fixed: real subscribers only), photo uploads trusted a
+      spoofable `Content-Type` header (fixed: real magic-byte check), and
+      CORS is now restrictable (`CORS_ALLOWED_ORIGINS`). Mobile app's SMS
+      toggle updated to match the new verification flow. All verified via
+      curl + `flutter analyze`/`test`. See `docs/progress-log.md`'s
+      2026-09-07 (later) entry for full detail. **Not done:** rate
+      limiting on login/signup/verify-code (deliberately out of scope);
+      `ADMIN_SIGNUP_CODE`/`USSD_WEBHOOK_USERNAME`/`PASSWORD`/
+      `CORS_ALLOWED_ORIGINS` still need setting in the actual demo
+      deployment's `.env`, not just this machine's local one; no live
+      mobile device click-through of the new code-entry dialog.
 - [ ] Frontend cleanup (left to the frontend team, doesn't block the demo
       but worth doing before judging):
   - [ ] Move the hardcoded `http://localhost:8000` API URL (duplicated in
@@ -159,6 +218,88 @@ Presentation & Pitch 5.
       continuing this:** find a second, more recent (post-2010) real
       flood-label source to layer on top — DFO's own archive stops
       there.
+- [x] **The "not a full retrain" blocker above turned out to be
+      solvable, 2026-09-09** — then the first attempt's numbers turned
+      out to have a leakage bug, caught and fixed the same day. The
+      discharge-percentile approximation `validate_against_dfo.py`
+      already used for evaluation works just as well as a training
+      feature (`app/models/train_ml_model_real.py`), but the initial
+      random row-level train/test split let days from the same
+      multi-day flood event land on both sides (19 of 29 events, 65%,
+      confirmed affected) — inflating the first "81.2% recall" claim.
+      Fixed with leave-one-event-out cross-validation across all 29 real
+      events (`app/models/evaluate_ml_loeo.py`): the trustworthy, pooled
+      result is **threshold 0.80: 52.7% recall / 17.95% false-positive
+      rate — still genuinely better than rules-based's 41.0% recall /
+      22.05% FPR on both axes**, just a smaller margin than first
+      thought. See `docs/progress-log.md`'s 2026-09-09 correction entry.
+- [x] **Attempted to wire the real-data model into production,
+      2026-09-09 — reverted after finding it's not safe to ship.**
+      Retrained on 100% of real data and swapped it into
+      `ml_risk_model.py`, then sanity-checked it against the actual demo
+      `regions.json` cities before calling it done: it predicted "low"
+      for **all 10 demo cities**, including Lagos and Kampala, which the
+      rules-based model correctly flags "high". Cause: the model's
+      real-world-calibrated discharge percentile treats "elevated" as far
+      more extreme than the hand-picked demo river-level values, which
+      were tuned to look sane against the rules-based 50/50 formula, not
+      against this model's learned distribution — a genuine calibration
+      mismatch, not a code bug. **Reverted** `ml_risk_model.py`/
+      `ml_risk_model.pkl`/`train_ml_model.py` to the original
+      synthetic-trained model via `git checkout`; production is
+      unaffected. See `docs/progress-log.md`'s 2026-09-09 correction
+      entry for the full story.
+- [x] **Investigated further, 2026-09-14 — it's not a calibration
+      problem, so recalibrating regions.json won't fix it.** Tried
+      exactly the recalibration this item proposed
+      (`app/models/calibrate_demo_regions.py`); it failed for 6 of 10
+      cities. Root cause: 49 of 50 real training days combining heavy
+      rainfall with a high river percentile are labeled "low", because
+      DFO only catalogs headline disasters — the model is accurately
+      learning "will this become a named disaster," a sparser and
+      different target than "is this actually risky." No amount of
+      rescaling `regions.json` fixes a label-quality problem in the
+      training data itself. See `docs/progress-log.md`'s 2026-09-14
+      entry for the full investigation. Production remains the original
+      synthetic-trained model — this needs a genuinely better label
+      source (see the new data-source research below), not a rescale.
+- [x] **NASA Earthdata account created, SWOT checked against all 10 demo
+      cities, 2026-09-14.** Real result, not comprehensive: Kinshasa
+      (Congo river) got a genuine, trustworthy real water-surface-
+      elevation reading ~12km from the city. Cairo got a real reading
+      but consistently ~46km away across 15 independent orbital passes.
+      The other 8 cities' actual local waterways are almost certainly
+      narrower than SWOT's ~100m resolution floor — real geographic
+      limit, not a search failure. Google Flood Hub API application
+      would still be worth submitting (months-long waitlist, not done
+      yet); GRDC registration deprioritized (discharge only, wouldn't
+      fix the core problem). Full writeup: `docs/progress-log.md`.
+- [x] **Fixed properly and shipped to production, 2026-09-14.** The item
+      above ("needs a genuinely better label source") is done: relabeled
+      training data using a discharge-percentile threshold calibrated
+      via Youden's J against real DFO disasters
+      (`app/models/calibrated_percentile_labels.py`) instead of DFO
+      day-matching. Leave-one-event-out CV with the threshold itself
+      recalibrated inside every fold (no leakage): **76.6% recall vs.
+      rules-based's 41.0%, at a real, disclosed cost of ~35.8% FPR vs.
+      22.05%** — a genuine trade-off, not a free win on both axes.
+      Verified the exact bug that killed the first two attempts is gone
+      (fed it `rainfall=90mm, river=3.95m` — correctly scores "high" with
+      high confidence now) and checked all 10 demo `regions.json` cities
+      on a clean backend restart: **8/10 exact match**, the 2 misses each
+      one tier low, not a wild swing. `ml_risk_model.pkl` now runs this
+      model in production. Full story, including the annual-maxima
+      return-period attempt that didn't work first: `docs/progress-log.md`'s
+      2026-09-14 entries.
+- [x] **Built a feedback-loop pipeline instead, 2026-09-14** —
+      `app/models/build_feedback_dataset.py` turns resolved pending
+      alerts (see the operator-review system below) into labeled
+      training rows in the system's own real operational units, sidestepping
+      the DFO-proxy calibration problem entirely. Tested
+      (`backend/tests/test_build_feedback_dataset.py`) and confirmed
+      working against both empty real data and synthetic data — honestly
+      reports "not enough data yet" rather than training on too little
+      (currently ~0 resolved alerts on a fresh deployment, as expected).
 - [x] **Native-speaker review of Swahili, Arabic, and Somali alert
       wording — all 3 confirmed correct (2026-08-17).** Also added
       city-name localization per the reviewers' feedback (e.g. "Cairo" →

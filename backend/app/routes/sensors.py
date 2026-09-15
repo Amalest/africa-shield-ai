@@ -1,4 +1,6 @@
+import hmac
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
@@ -10,10 +12,34 @@ from app.routes.risk import RiskCheckResponse, build_risk_check_response
 router = APIRouter()
 
 DEVICES_FILE = Path(__file__).resolve().parent.parent / "data" / "devices.json"
+SENSOR_READINGS_FILE = Path(__file__).resolve().parent.parent / "data" / "sensor_readings.json"
+
+# Keep only the most recent readings across all devices — this is an
+# operator-visibility log (see GET /api/admin/devices), not a scientific
+# archive, so an unbounded file isn't worth the disk growth.
+MAX_LOGGED_READINGS = 1000
+
+
+def _log_sensor_reading(device_id: str, response: RiskCheckResponse) -> None:
+    readings = json.loads(SENSOR_READINGS_FILE.read_text(encoding="utf-8")) if SENSOR_READINGS_FILE.exists() else []
+    readings.append(
+        {
+            "device_id": device_id,
+            "location_name": response.location_name,
+            "rainfall_mm_24h": response.rainfall_mm_24h,
+            "river_level_m": response.river_level_m,
+            "risk_level": response.risk_level,
+            "risk_score": response.risk_score,
+            "received_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        }
+    )
+    readings = readings[-MAX_LOGGED_READINGS:]
+    SENSOR_READINGS_FILE.write_text(json.dumps(readings, indent=2), encoding="utf-8")
 
 
 class SensorReadingRequest(BaseModel):
     device_id: str
+    device_key: str
     rainfall_mm_24h: float = Field(allow_inf_nan=False)
     river_level_m: float = Field(allow_inf_nan=False)
     timestamp: str
@@ -33,6 +59,15 @@ def sensor_reading(payload: SensorReadingRequest) -> RiskCheckResponse:
     provisioning flow yet). 404s if `device_id` isn't registered, rather
     than guessing a location.
 
+    **Requires `device_key`** matching that device's `device_key` in
+    `devices.json` (401 if it doesn't match). Without this, `device_id`
+    alone was enough to submit a reading — and the demo device's id
+    (`esp32-demo-01`) is published in this repo's own README, so anyone
+    could have spoofed a reading and triggered a real automatic alert.
+    The key is a long random string, not a password an operator needs to
+    remember — generate one with `python -c "import secrets;
+    print(secrets.token_hex(16))"` for each new device.
+
     `rainfall_mm_24h`/`river_level_m` reuse the exact same
     `allow_inf_nan=False` field constraint `RiskCheckRequest` uses, so a
     NaN/Infinity reading is rejected the same way and hits the same
@@ -49,16 +84,20 @@ def sensor_reading(payload: SensorReadingRequest) -> RiskCheckResponse:
     that field appears.
 
     If this reading pushes the device's region into "high" risk for the
-    first time (not just "still high" from the last reading), this also
-    automatically sends a real SMS to that region's subscribers — see
-    `maybe_auto_trigger()` in `app/routes/alerts.py` for the exact
-    once-per-transition logic and why `/api/risk-check` doesn't do this
-    too. A failure here never breaks the sensor-reading response itself;
-    the reading is still scored and returned either way."""
+    first time (not just "still high" from the last reading), this puts
+    a real community alert up for operator review (notifying admins by
+    SMS) rather than sending it immediately — see `maybe_auto_trigger()`
+    in `app/routes/alerts.py` and `app/routes/pending_alerts.py` for the
+    once-per-transition logic, the review workflow, and why
+    `/api/risk-check` doesn't do this too. A failure here never breaks
+    the sensor-reading response itself; the reading is still scored and
+    returned either way."""
     devices = json.loads(DEVICES_FILE.read_text(encoding="utf-8")) if DEVICES_FILE.exists() else []
     device = next((d for d in devices if d["device_id"] == payload.device_id), None)
     if device is None:
         raise HTTPException(status_code=404, detail=f"Unknown device_id: {payload.device_id}")
+    if not hmac.compare_digest(payload.device_key, device.get("device_key", "")):
+        raise HTTPException(status_code=401, detail="Invalid device_key for this device_id")
 
     response = build_risk_check_response(
         device["location_name"],
@@ -67,5 +106,12 @@ def sensor_reading(payload: SensorReadingRequest) -> RiskCheckResponse:
         payload.rainfall_mm_24h,
         payload.river_level_m,
     )
-    maybe_auto_trigger(device["location_name"], response.risk_level)
+    _log_sensor_reading(payload.device_id, response)
+    maybe_auto_trigger(
+        device["location_name"],
+        response.risk_level,
+        response.rainfall_mm_24h,
+        response.river_level_m,
+        response.risk_score,
+    )
     return response

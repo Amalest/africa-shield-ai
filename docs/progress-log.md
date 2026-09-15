@@ -5,6 +5,569 @@ first for current state; scroll down for history.
 
 ---
 
+## 2026-09-14 (latest) — Shipped a real-data ML model to production. Third attempt was the one that worked.
+
+**`ml_risk_model.pkl` now runs a real-data-trained model in production**,
+replacing the original synthetic-trained one. This is the payoff of the
+investigation across this whole day's earlier entries — worth reading
+those first for the two attempts that didn't work, since understanding
+why they failed is what made this one succeed.
+
+**The fix that actually worked**: relabel training days using a
+discharge-percentile threshold *calibrated to best match real
+DFO-confirmed disasters* (Youden's J, not a guessed round number),
+instead of requiring an exact date-match to DFO's sparse disaster
+catalog. See `app/models/calibrated_percentile_labels.py` for the full
+reasoning. Two calibrated cutoffs, both fit by sweeping every candidate
+percentile against real ground truth:
+- **Medium tier: 61.5th percentile** — best separates any DFO-confirmed
+  day from an ordinary day (Youden's J = 0.495: 85.4% recall, 35.9% FPR
+  against all non-DFO days).
+- **High tier: 80.7th percentile** — best separates DFO's own
+  high-severity days from its medium-severity days (Youden's J = 0.206 —
+  much weaker separation; severity likely depends on exposure/damage
+  factors this dataset doesn't capture, not just discharge magnitude).
+
+**Also tried and ruled out first, honestly, before this**:
+multi-day rainfall accumulation (`app/models/accumulation_features.py`)
+as a way to raise the separability ceiling — cross-validated AUC stayed
+flat at ~0.81 whether same-day rainfall, discharge percentile, or 3-day/
+7-day rainfall accumulation was used, alone or combined. River discharge
+already integrates upstream rainfall across the whole basin better than
+one city's own point rainfall history can reconstruct — confirmed
+empirically, not assumed.
+
+**Validated with the same rigor as everything else this project ships**:
+- Leave-one-event-out cross-validation (`app/models/evaluate_calibrated_loeo.py`),
+  with the percentile thresholds themselves **recalibrated inside every
+  fold** (using only that fold's training rows) — closing the same class
+  of leakage bug this project already caught once this session, applied
+  here to the threshold-fitting step, not just the row split. Fold-to-fold
+  cutoffs came back essentially identical (medium 0.610 ± 0.000, high
+  0.820 ± 0.004) — a stable, real signal, not fold-specific noise.
+- **Result: ~76.6% recall vs. rules-based's 41.0%, at ~35.8% false-positive
+  rate vs. rules-based's 22.05%.** This is a genuine, honestly-measured
+  improvement in catching real floods — but it is **a trade-off, not a
+  free win on both axes**: swept every threshold from 0.05 to 0.995 and
+  the false-positive rate never drops below ~31%, even at the strictest
+  possible cutoff. Say this plainly whenever these numbers are cited —
+  the earlier (leaked) claim of "beats rules-based on both axes" from
+  the first real-data attempt does not hold here, and shouldn't be
+  repeated.
+- Checked the exact failure mode that blocked the first two attempts:
+  fed the model `rainfall=90mm, river=3.95m` and `rainfall=5mm,
+  river=3.95m` — both now correctly score "high" with high confidence.
+  The backwards rainfall coefficient is gone.
+- Checked against all 10 demo `regions.json` cities (the specific check
+  that caught the very first attempt's failure): **8/10 exact match**
+  with the rules-based label. The two misses (Cairo: rules says medium,
+  ML says low; Dar es Salaam: rules says high, ML says medium) are each
+  one tier low, not a wild swing in either direction, and both undershoot
+  rather than falsely alarm — consistent with a genuine "second opinion"
+  that's expected to sometimes disagree on borderline cases, not a
+  broken model. Verified on a fully clean backend restart after an
+  earlier stale-server read gave a misleading 10/10 (pickled models load
+  once at import time; overwriting the `.pkl` file does not itself
+  trigger `--reload`, which only watches `.py` files — worth remembering
+  if this ever needs retraining again while the server is running).
+- Full `pytest` suite (70 tests) still green; `/api/risk-check`,
+  `/api/regions`, `/api/sensor-reading`, and the pending-alert pipeline
+  all manually re-verified end-to-end against the new model.
+
+**Kept, not deleted, as the honest record of what didn't work**:
+`return_period_features.py` (annual-maxima return periods — too strict,
+only 4.2% of real disasters crossed even a 2-year threshold computed
+this way) and `accumulation_features.py` (multi-day rainfall — didn't
+move the separability ceiling). Both are real, working code with
+real findings, just not the answer.
+
+---
+
+## 2026-09-14 (later) — Tried NASA SWOT satellite data against the 10 demo cities: one real hit, one near-miss, eight "too small a river"
+
+Followed up on the data-source research below — got a NASA Earthdata
+account and `EARTHDATA_TOKEN`, installed `earthaccess` + `geopandas`,
+and wrote `app/models/fetch_swot_river_levels.py` to search for real
+SWOT satellite river-height readings near all 10 demo cities.
+
+**First pass was misleading**: picking the "most recent" granule per
+city looked like it found coverage everywhere, but every single city
+came back "no valid reading" — because SWOT's river product ships as
+one file per (continent, orbital pass), and CMR's own bounding-box
+metadata for these files is a crude rectangle spanning the file's ENTIRE
+multi-thousand-km swath (confirmed directly: one granule's stated box
+ran from the equator to 66°N). A city falling inside that huge box says
+nothing about whether an actual river reach exists nearby in that
+specific file — recency was irrelevant; what mattered was which of many
+different orbital ground tracks actually passes near the city at all.
+
+**Fixed by trying up to 15 distinct orbital passes per city** (not just
+the newest file) and reporting the genuinely closest valid reading found,
+honestly, rather than the first thing that technically matched:
+
+- **Kinshasa: a real, trustworthy hit.** Congo river, 248.24m water
+  surface elevation, ~12km from the city center. This is a real,
+  usable calibration anchor.
+- **Cairo: a real but distant hit, consistent across 15 independent
+  passes.** Nile (Rosetta Branch), ~46km away every single time —
+  strongly suggesting that's genuinely where the nearest SWOT-defined
+  reach sits relative to that exact coordinate, not a search miss. Also
+  surfaced a real data-quality wrinkle: the same reach reported values
+  from 0.01m to 10.14m across nearby dates — some of those are almost
+  certainly low-quality retrievals that the fill-value filter alone
+  doesn't catch (a real production use of this data would need to also
+  check the `reach_q` quality flag, not just filter the `-1e12` fill
+  sentinel, which this script doesn't do yet).
+- **The other 8 cities (Lagos, Nairobi, Accra, Kampala, Maputo, Dar es
+  Salaam, Mogadishu, Addis Ababa): closest valid readings were 130-560km
+  away**, no closer across every pass tried. Their actual local
+  waterways (lagoons, small urban rivers) are almost certainly narrower
+  than SWOT's ~100m minimum resolvable width — a real geographic limit,
+  not a bug to keep chasing.
+
+**Conclusion: SWOT is real and valuable, but only as a spot-check for 1
+(maybe 2) of the 10 demo cities, not a comprehensive fix.** It won't
+single-handedly solve the calibration/label-quality problem from the
+entry below for every city. Worth keeping as a genuine, cited data point
+for Kinshasa specifically; not worth further investment chasing the
+other 8 without a fundamentally different approach (e.g. a river
+database with narrower/urban waterway coverage). The feedback-loop
+pipeline below remains the actual path that scales to all cities over
+time, since it doesn't depend on satellite resolution limits at all.
+
+---
+
+## 2026-09-14 — Found the *real* reason the real-data model isn't deployable (it's not just calibration), built a feedback-loop pipeline, and surveyed real data sources
+
+Went looking for a fix to the calibration mismatch from 2026-09-09's
+entry below — tried recalibrating `regions.json`'s `river_level_m`
+values to match the model's learned percentile scale
+(`app/models/calibrate_demo_regions.py`) instead of the threshold. That
+search failed for 6 of the 10 demo cities, and digging into why turned
+up something more fundamental than a scale problem.
+
+**The real issue: the model's fitted coefficients are unreliable exactly
+in the "obviously severe" corner of input space.** Checked the model
+directly at extreme inputs: `rainfall=90mm, river=3.95m` (out of a 4m
+cap) scores only 6% "high" / 62% "medium"; `rainfall=5mm, river=3.95m`
+scores 54% "high". Same near-maximum river reading, and *less* rainfall
+scores as more severe. Traced this to the training data itself: of the
+50 real training days that combined >50mm rainfall with a >90th-
+percentile river reading, **49 of 50 are labeled "low."** Not because
+those days were safe — because DFO only catalogs headline, newsworthy
+disasters, so a day with severe-looking conditions but no internationally
+reported disaster gets labeled exactly the same as a calm day. The model
+is accurately learning "will this become a named disaster," which is a
+different, sparser target than "is this actually risky" — and that gap
+happens to land squarely on the demo's own input range. Recalibrating
+`regions.json`'s values wouldn't fix this; the label source itself is
+the limitation. **Conclusion: this model still isn't safe to deploy, for
+a different and better-understood reason than 2026-09-09's finding.**
+`calibrate_demo_regions.py` is kept as the record of this investigation,
+not as a working fix.
+
+**Built instead: real infrastructure to grow past DFO's label-sparsity
+problem** (`app/models/build_feedback_dataset.py`, `app/routes/
+pending_alerts.py`'s approve/reject workflow from earlier this week).
+Every pending alert an operator resolves — approve/auto-sent means
+"confirmed elevated," reject with reason `false_positive`/`sensor_fault`
+means "confirmed safe" — becomes a labeled row, in the system's real
+operational units (whatever a sensor actually reports), not DFO's
+discharge-percentile proxy. That sidesteps the calibration-mismatch
+problem entirely, since it's the same scale live sensors and
+`regions.json` already use. **Honestly: a brand-new deployment has ~0
+resolved alerts today.** The script is real, tested (`backend/tests/
+test_build_feedback_dataset.py`), and refuses to pretend a trainable
+model exists before there's enough data (currently gated at 30+ rows,
+8+ per class) — it's infrastructure for after the system has real
+operational history, not a working model today.
+
+**Production is unchanged.** `ml_risk_model.py` still loads the original
+synthetic-trained model. No production code was touched by this
+investigation.
+
+**Real data source research**, for filling the actual gap (a denser,
+more recent, better-labeled real ground truth than DFO's sparse
+disaster catalog):
+
+- **NASA SWOT** (Surface Water and Ocean Topography, launched 2022, data
+  released March 2024) — the most promising find. Measures actual river
+  water *surface elevation* by satellite altimetry (real height in
+  meters, not a discharge proxy) for rivers wider than ~100m, globally,
+  released via NASA Earthdata. Account creation is instant and free
+  (`https://urs.earthdata.nasa.gov/users/new`). Revisit per location is
+  roughly every 11-21 days (not daily), so it won't replace the daily
+  rainfall/discharge pipeline, but a handful of real altimetry readings
+  for the demo's rivers (Niger at Lagos, Nile at Cairo, Congo at
+  Kinshasa) would be a genuinely strong data point to cite, and a real
+  long-term path to a level-in-meters feature that isn't a proxy.
+  **Recommended: create this account.**
+- **Google Flood Hub / Flood Forecasting API** — real per-gauge flood
+  forecasts with return-period-based severity across 40+ African
+  countries; would likely solve this exact problem outright. Access is
+  waitlisted, and Google states it can take **several months** — not
+  viable before the hackathon, but free to apply for now and worth
+  having in progress. **Recommended: apply now, expect nothing before
+  the hackathon.**
+- **GRDC** (Global Runoff Data Centre, WMO) — the highest-quality real
+  river-gauge discharge archive that exists, including a dedicated
+  Southern Africa flow database. Requires registration and explicit
+  acceptance of data-sharing terms, reviewed manually (turnaround not
+  officially published; not same-day). Would still only give discharge,
+  not level in meters, so it wouldn't fix the core problem by itself —
+  useful mainly as a higher-quality replacement for the Open-Meteo/
+  GloFAS discharge feed already in use. **Lower priority.**
+- **UNOSAT / Sentinel-1 SAR rapid flood mapping** — real, recent (post-
+  2020s) satellite-derived flood extent maps published per actual
+  disaster event, often with no account needed at all (published as
+  open rapid-mapping products, e.g. via ReliefWeb/HDX). Would help with
+  the "DFO stops too early" gap by adding recent events, but matching a
+  flood-extent polygon to a specific city/date/rainfall reading is
+  manual cross-referencing work, not an API integration.
+- Considered and deprioritized: **Copernicus CDS/GloFAS direct** (same
+  underlying discharge data the project's existing Open-Meteo pipeline
+  already re-serves for free, no account needed — direct access adds
+  no new information); national hydromet agencies for the 10 demo
+  countries (realistically too slow to reach before the hackathon).
+
+---
+
+## 2026-09-09 (later still) — Correction: the real-data ML numbers were leaked, and the fixed model isn't safe to deploy
+
+**This corrects the entry immediately below — read this one first.** Two
+real problems found while trying to actually ship what that entry
+described, both caught before either one reached production.
+
+### Problem 1: the 81.2%/62.5% numbers had a real leakage bug
+DFO flood events span multiple consecutive days, and the training data
+labels every day in an event's range. The random *row-level* train/test
+split used below could put some days of one event in training and other
+days of that SAME event in testing — the model could partly "recognize"
+an event it had already seen pieces of, rather than genuinely
+generalizing. Checked directly (`app/models/check_split_leakage.py`):
+**19 of 29 real events had days on both sides of the split** — the
+majority. Fixed properly with leave-one-event-out cross-validation
+(`app/models/evaluate_ml_loeo.py`) — every one of the 29 real, usable
+events held out and tested exactly once, predictions pooled across all
+29 folds. **Corrected, trustworthy result: at threshold 0.80, 52.7%
+recall / 17.95% false-positive rate — still genuinely better than
+rules-based (41.0% recall / 22.05% FPR) on both axes**, just a smaller
+margin than the leaked numbers claimed.
+
+### Problem 2: the corrected model still isn't safe to deploy — a real calibration mismatch with the demo's own regions
+Retrained a final model on 100% of the real usable data and wired it
+into `ml_risk_model.py` at threshold 0.80 — then, before calling it
+done, tested it against the actual `app/data/regions.json` sample
+cities (not just the DFO test data) as a sanity check. **It predicted
+"low" for all 10 demo cities, including Lagos and Kampala, which the
+rules-based model correctly scores as "high" (0.82 and 0.89).** Root
+cause: the model's training feature (a real discharge percentile scaled
+onto the same 0-4m range as `river_level_m`) reflects how rare *actual
+confirmed floods* are in 26 years of real history (239 of 40,904 days,
+0.58%) — so the model's real-data-calibrated notion of "elevated" turns
+out to be much more extreme than the hand-picked `regions.json` values,
+which were tuned to "look sane" against the rules-based formula's 50/50
+blend, not against this model's learned distribution. Two different
+scales that happen to share the same 0-4 numeric range are not the same
+scale.
+
+**Reverted immediately** (`git checkout` on `ml_risk_model.py` and
+`ml_risk_model.pkl`, confirmed back to the original synthetic-trained
+model and its normal output) rather than shipping something that would
+have made the ML "second opinion" look broken to judges in the actual
+demo. The LOEO-CV finding above is still real and worth citing (a
+genuine, validated improvement exists when the model sees inputs from
+the same distribution it was trained on) — it just isn't safely
+deployable against this project's specific hand-picked demo inputs
+without more work.
+
+### Current honest status
+- Production (`ml_risk_model.py`) is unchanged — still the original
+  synthetic-trained model, unaffected by any of this.
+- The real-data-trained model, LOEO-CV-validated at 52.7% recall / 17.95%
+  FPR vs. rules-based's 41.0%/22.05%, remains a genuine finding but is
+  **not deployed and not currently deployable** without resolving the
+  calibration mismatch above.
+- `app/models/train_ml_model_real.py`, `tune_ml_threshold.py`,
+  `check_split_leakage.py`, and `evaluate_ml_loeo.py` are all real,
+  working, and kept for this reason — the analysis is sound, the
+  deployment isn't ready.
+- **`docs/AfriShield-ML-Evolution-Guide.pdf` and this file's entry below
+  still state the leaked 81.2%/62.5% numbers and don't mention the
+  calibration mismatch — due for a correction pass.**
+- **Next step for anyone continuing this**: either recalibrate the
+  demo's `regions.json` sample values to be consistent with real
+  discharge percentiles for each city (a data-honesty question, not just
+  a code one), or find a genuine way to reconcile the two scales, before
+  attempting to deploy a real-data-trained model against this project's
+  own demo inputs again.
+
+---
+
+## 2026-09-09 (later same day) — ML model retrained on real data, then threshold-tuned to beat the rules-based model
+
+**Correction posted above, same day — the recall/FPR numbers in this
+entry have a leakage bug, and the resulting model was found unsafe to
+deploy. Read the entry above this one first.**
+
+Real, meaningful follow-up to the 2026-08-29 DFO validation work — that
+session only used real data to *check* the existing models; this one
+uses it to actually *train* a new one, and finds a genuine improvement.
+
+### Completed
+- **Extracted shared real-data feature logic into
+  `app/models/dfo_features.py`** (`load_usable_rows()`,
+  `discharge_percentile_by_city()`, `build_pseudo_features()`) so
+  `validate_against_dfo.py` and the new training script use the exact
+  same discharge-percentile-as-river-level approximation instead of two
+  copies drifting apart. Refactored `validate_against_dfo.py` to import
+  from it and re-ran it to confirm byte-identical output to before the
+  refactor (41.0%/28.0% recall, 21.99%/13.73% FPR — unchanged).
+- **`app/models/train_ml_model_real.py`** — trains on the real
+  `real_training_data_dfo.csv` (40,904 usable real rows, 239 real
+  DFO-confirmed elevated-risk days) instead of synthetic data, with
+  `class_weight="balanced"` to keep the rare flood class (0.58% of rows)
+  from being ignored. Tried Logistic Regression and Random Forest; on a
+  held-out 20% real test split (never seen during training — avoids the
+  leakage risk of training and "validating" on the same data),
+  **Logistic Regression won on recall: 81.2% vs. the old synthetic
+  model's 27.1% and rules-based's 47.9% on this same held-out set** (not
+  the full-239-row figures quoted elsewhere, which aren't a fair
+  comparison to a model that trained on part of that data). Saved to
+  `ml_risk_model_real.pkl` — **not yet wired into `ml_risk_model.py`**.
+- **`app/models/tune_ml_threshold.py`** — swept the model's decision
+  threshold (default is an implicit ~50% confidence cutoff) instead of
+  accepting the default. Found **threshold 0.80: 62.5% recall, 17.69%
+  false-positive rate — better than rules-based on both axes at once**
+  (rules-based: 47.9% recall, 21.92% FPR), not a recall-for-FPR
+  trade-off. Also reports the higher-recall end of the curve (threshold
+  0.55: 87.5% recall, 42.15% FPR) as an option if the team ever wants to
+  prioritize catching more floods over fewer false alarms.
+- **Caught and fixed a real bug while building the threshold sweep**: an
+  early version of its recall metric used a looser "elevated vs. low"
+  definition than `validate_against_dfo.py`/`train_ml_model_real.py`'s
+  stricter "predicted level must meet or exceed the true level"
+  definition, which silently inflated recall numbers and made results
+  incomparable across scripts. Fixed before reporting any numbers
+  publicly — caught by cross-checking the rules-based/old-ML figures
+  against already-known values from the other two scripts, which didn't
+  match until the metric was unified.
+- Wrote `docs/AfriShield-ML-Evolution-Guide.pdf` — a beginner-friendly,
+  5-chapter walkthrough of this whole progression (hand-written formula
+  → synthetic ML → real-data validation reality check → real-data
+  training → threshold tuning) plus a 12-term glossary (recall, false
+  positive, FPR, precision, threshold, class imbalance, class weight
+  balancing, Logistic Regression, training/test data, overfitting,
+  Youden's J), for sharing with non-ML teammates.
+
+### Not yet started
+- **The tuned real-data model is not wired into production.**
+  `ml_risk_model.py`'s `predict_ml_risk()` still loads the old
+  synthetic-trained `ml_risk_model.pkl` and uses the severity-weighted
+  blend approach, not `ml_risk_model_real.pkl` with a 0.80 threshold.
+  Swapping it in needs: replacing the loaded model file, changing
+  `predict_ml_risk()`'s decision logic to threshold-based instead of
+  blend-based, and re-verifying `POST /api/risk-check` and
+  `GET /api/regions` end-to-end afterward.
+- The discharge-percentile-as-river-level approximation is still real,
+  still honest, but still an approximation — same standing caveat as the
+  2026-08-29 validation work.
+- No decision yet on which threshold to actually ship (0.80's "beats
+  rules-based on both axes" is the easy, defensible pick; 0.55's "catch
+  almost everything" is a real option too, just with a real false-alarm
+  cost) — a team call, not a technical one.
+
+---
+
+## 2026-09-09 — Voice alerts made additive, matching push (no longer a `channel` choice)
+
+Closes a real accessibility gap: voice existed in this project
+specifically for people a text-only channel doesn't reach, but was only
+sent if an admin remembered to pick `"channel": "voice"` on a given send
+— meaning that accessibility depended on someone else's manual choice,
+not on the recipient's actual need.
+
+### Completed
+- **`POST /api/alerts/send` now sends both SMS and a voice call to every
+  subscriber, always.** Removed the `channel` request field entirely (no
+  more `"sms"` vs `"voice"` choice) and replaced the single `channel`
+  response field with independent `sms_status`/`voice_status` fields,
+  reusing the exact same vocabulary `push_status` already established
+  (`"sent"` / `"simulated"` / `"failed"` / `"no_recipients"`) — all three
+  channels (SMS, voice, push) now report status identically. Confirmed
+  no frontend or mobile code called this endpoint with a `channel` param
+  before making the change, so nothing else needed updating.
+- **`maybe_auto_trigger()`** (the sensor-reading auto-alert path) updated
+  to match — an automatic "high" transition now auto-sends both SMS and
+  voice, not just SMS.
+- **Also fixed a real, previously-flagged latent bug while touching this
+  code**: `send_alert_for_region()`'s SMS/voice sends had no exception
+  handling, so a malformed phone number could crash the whole endpoint
+  with a raw 500 (the exact class of bug found and fixed in
+  `POST /api/subscribers/verify/request` on 2026-09-07/08, but noted then
+  as "still exists in alerts.py, not yet fixed"). Extracted a shared
+  `_send_channel()` helper so SMS and voice share one status-handling
+  code path, both wrapped in try/except → `"failed"` status instead of
+  crashing. Applied the identical fix to
+  `POST /api/admin/incidents/{id}/response` in `admin_reports.py`, which
+  had the same unguarded pattern.
+- Verified end-to-end via curl against a running server: a region with a
+  real subscriber (Maputo) correctly showed `sms_status: "sent"`
+  (real Africa's Talking send) and `voice_status: "simulated"` (no
+  `AT_VOICE_NUMBER` configured); a region with none (Nairobi) correctly
+  showed `"no_recipients"` for both; an unknown region still 404s.
+  `GET /api/alerts` confirmed to return old log entries (pre-2026-09-09,
+  still carrying the old `channel` field) and new entries (`sms_status`/
+  `voice_status`) side by side without crashing — `alert_log.json` is
+  gitignored runtime state, never migrated retroactively.
+
+### Not yet started
+- This makes every alert send more expensive (SMS + voice both billed,
+  where it used to be one or the other) — not a concern for the hackathon
+  demo ($25 of Africa's Talking credit easily covers it), but worth a
+  one-line honesty note in the pitch if asked about real-world cost at
+  scale.
+- `POST /api/admin/incidents/{id}/response` (the admin's targeted,
+  per-incident response tool) deliberately was NOT changed to be
+  SMS+voice-additive — that endpoint lets an admin pick a specific
+  channel for a specific incident on purpose (e.g. "just call this
+  person"), which is a different use case from the broadcast regional
+  alert this change applies to.
+
+---
+
+## 2026-09-07 (later same day) — Security audit and fixes: 5 high, 3 medium severity gaps closed
+
+A full-project security audit (backend, mobile, the Wokwi hardware sim —
+frontend-web had nothing comparable, since it has no wired-up code yet)
+found 5 high-severity and 3 medium-severity real, exploitable gaps.
+Every one is now fixed and verified end-to-end via curl against a
+running server (not just written and assumed correct). Full field-level
+detail in `docs/api-contract.md`'s status banner and each endpoint's own
+section; summary here.
+
+### Completed — high severity
+- **Admin signup had no gate at all** — any internet user could create a
+  full admin account with full incident-management access. Fixed:
+  `POST /api/admin/signup` now requires `signup_code` matching a new
+  `ADMIN_SIGNUP_CODE` env var; disabled entirely (503) if that's unset,
+  rather than silently open.
+- **`ADMIN_JWT_SECRET` fell back to a fixed, publicly-known value** —
+  forgeable by anyone who'd read this repo's source. Fixed
+  (`app/config.py`): an unset one now generates a real random secret via
+  `secrets.token_hex(32)` once per process start instead. Trade-off,
+  not a security concern: sessions don't survive a restart without a
+  persistent value set. Also added token revocation (`jti` claim +
+  `app/data/revoked_jtis.json`) and `POST /api/admin/logout`, so a
+  logged-out token stops working immediately instead of staying valid
+  for its full 24h.
+- **Sensor ingestion (`POST /api/sensor-reading`) had no authentication**
+  — the demo `device_id` (`esp32-demo-01`) is published in this repo's
+  own README, so anyone could spoof a reading and trigger a real
+  automatic SMS/voice/push alert, or flap it to spam subscribers. Fixed:
+  now requires a per-device `device_key` (`devices.json`), checked with
+  `hmac.compare_digest`. Generated one for the demo device and updated
+  `hardware/wokwi-flood-sensor/sketch.ino` to send it — documented
+  explicitly as a public demo key, real devices should get their own,
+  uncommitted.
+- **Subscribing/unsubscribing a phone number had zero ownership check**
+  — anyone could add *or remove* any real phone number from real flood
+  alerts just by knowing it, reachable via the direct API, the USSD
+  webhook, and (as of the mobile SMS-toggle work finished the same day)
+  the mobile app too. Fixed: new `POST /api/subscribers/verify/request`
+  sends a 6-digit code (real SMS if configured, returned directly in the
+  response for testing if not — same "never fake success" pattern as
+  everywhere else in this backend); `POST`/`DELETE /api/subscribers`
+  now both require it, single-use, 10-minute expiry. **Also discovered
+  and fixed a real crash while testing this**: `send_sms()` propagates
+  a `ValueError` when the `africastalking` SDK rejects a malformed phone
+  number client-side, which was unhandled and produced a raw 500 — now
+  caught and returned as a clean `502`.
+- **The USSD webhook trusted a caller-supplied `phoneNumber` with no
+  check on who was actually calling it** — anyone could POST directly to
+  `/api/ussd` pretending to be any phone number. Fixed: optional HTTP
+  Basic Auth (`USSD_WEBHOOK_USERNAME`/`PASSWORD`, embeddable in the
+  webhook URL Africa's Talking calls) — off by default, matching this
+  repo's documented local-curl-testing workflow, verified both the
+  protected and unprotected states work correctly. The subscribe/
+  unsubscribe *menu itself* deliberately still needs no per-action code
+  — once the webhook is protected, a real USSD session's phone number is
+  asserted by the telecom carrier, not attacker-controlled.
+
+### Completed — medium severity
+- **`POST /api/admin/incidents/{id}/response` could message arbitrary
+  phone numbers** — an admin (including a self-registered one, before
+  the signup fix above) could pass any `recipients` array for
+  `sms`/`voice`, turning this into an open relay against the org's paid
+  Africa's Talking account. Fixed: `sms`/`voice` recipients are now
+  always resolved from `subscribers.json` for the report's own region;
+  caller-supplied `recipients` is only used for `radio`/`community_leader`
+  (freeform station/leader names, no paid API behind either).
+- **Photo uploads trusted the client's declared `Content-Type`**, not
+  the file's actual bytes — a non-image file labeled `image/jpeg` used
+  to pass. Fixed: `app/routes/hazard_reports.py` now sniffs real magic
+  bytes (JPEG/PNG/WebP signatures) and rejects anything else with a 415,
+  regardless of the declared type. Verified: an HTML file spoofed as
+  `image/jpeg` is now rejected; a real (tiny, hand-built) JPEG still
+  succeeds.
+- **CORS was wide open** (`allow_origins=["*"]`) with no way to tighten
+  it. Fixed: new `CORS_ALLOWED_ORIGINS` env var (comma-separated);
+  still defaults to `*` if unset, since the dashboard's deployed URL
+  isn't fixed yet, but now closeable without a code change.
+
+### Mobile app changes to match
+- `mobile-app/lib/services/subscriber_service.dart` rewritten: `enable`/
+  `disable` now take a `code` parameter, plus a new `requestCode()`
+  method matching the backend's two-step flow.
+- `alert_channels_screen.dart`: the SMS toggle (both directions) now
+  requests a code and shows a dialog prompting for it before completing
+  — pre-filled when the backend returns one directly (SMS not configured
+  server-side), otherwise blank since a real code only exists in the SMS
+  the user just received. Removed the old silent background
+  re-registration on screen-open (`_syncSmsRegistration`) — it can't
+  complete anymore without the user present to enter a code. SMS's
+  default toggle state changed from "on" to "off", since an unverified
+  "on" would now be misleading.
+- Added 6 new keys × 7 languages to `lib/l10n/app_*.arb` for the code
+  dialog (title, body with a `{phone}` placeholder, the simulated-code
+  testing note, hint, submit button, request-failed message).
+- `flutter analyze` and `flutter test` both pass clean after all of the
+  above.
+
+### Verification
+Every fix curl-tested end-to-end against a locally running server:
+admin signup rejected without/with-wrong `signup_code` then accepted
+with the right one; a revoked token correctly rejected on the next call;
+sensor readings rejected without/with-wrong `device_key` then accepted;
+the full request-code → register → re-use-same-code-fails →
+request-new-code → unsubscribe flow for `/api/subscribers`; USSD
+correctly open with no Basic Auth configured and correctly gated
+(401/401/200 for none/wrong/right credentials) once configured; an admin
+response's `recipients` field verified to reflect the real Maputo
+subscriber regardless of what phone number was passed in, and
+`"no_recipients"` for a region with none; the spoofed-Content-Type photo
+upload test. Mobile side verified via `flutter analyze`/`flutter test`
+(no live device/browser click-through this session — see the standing
+"Chrome extension not always connected" caveat from earlier sessions).
+
+### Not yet started
+- No rate limiting on login/signup/verify-code-request — brute-forcing a
+  password or a 6-digit code isn't prevented by anything at the
+  application layer (relies on network-level protection if any exists).
+  Deliberately out of scope for this pass (DoS/rate-limiting concerns
+  were explicitly excluded from the audit that drove this work).
+- `ADMIN_SIGNUP_CODE`/`USSD_WEBHOOK_USERNAME`/`PASSWORD`/
+  `CORS_ALLOWED_ORIGINS` are all unset in the actual deployed/demo
+  environment until someone sets them — this session only built the
+  mechanism and set local dev values in this machine's own gitignored
+  `.env`, not any shared/production one.
+- No live mobile device/browser click-through of the new SMS
+  verification dialog — verified via static analysis and backend-side
+  curl testing of the same API calls the mobile code makes, not an
+  actual tap-through.
+
+---
+
 ## 2026-09-07 — Admin Command Center API built, at Habiba's request
 
 Habiba asked (via Matthias) for a specific list of endpoints to connect

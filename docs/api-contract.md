@@ -1,5 +1,49 @@
 # API Contract — Africa Shield AI Backend
 
+**Status (as of 2026-09-09): voice alerts are additive now, not a
+`channel` choice.** `POST /api/alerts/send` no longer accepts `channel`
+— every alert send now fires both SMS and a voice call to every
+subscriber, always, the same way push already worked. The response's
+single `channel` field was replaced with independent `sms_status` /
+`voice_status` fields (see that endpoint's section). Breaking change to
+both the request and response shape.
+
+**Status (as of 2026-09-07, later same day): a security audit found and
+fixed 5 high-severity gaps.** All are breaking changes to the affected
+request shapes, not additive — see each endpoint's section for the exact
+new required field:
+
+- `POST /api/admin/signup` now requires `signup_code` (a shared invite
+  code, `ADMIN_SIGNUP_CODE` in `.env`) — previously anyone could create a
+  full admin account with no gate at all.
+- `ADMIN_JWT_SECRET` no longer falls back to a fixed, publicly-known demo
+  value — an unset one now generates a real random secret per process
+  start instead (secure, but sessions don't survive a restart without a
+  persistent value). New `POST /api/admin/logout` revokes a token
+  immediately rather than leaving it valid until its natural 24h expiry.
+- `POST /api/sensor-reading` now requires `device_key` (per-device, in
+  `devices.json`) — previously `device_id` alone was enough, and the demo
+  device's id is published in this repo's own README.
+- `POST /api/subscribers` and `DELETE /api/subscribers/{phone_number}`
+  now require `code` — proof of phone-number ownership via the new
+  `POST /api/subscribers/verify/request`. Previously anyone could
+  subscribe *or unsubscribe* any real phone number with zero proof,
+  which for unsubscribing someone from real flood warnings was about as
+  bad an outcome as this system could produce.
+- `POST /api/ussd` gained optional HTTP Basic Auth
+  (`USSD_WEBHOOK_USERNAME`/`PASSWORD`) — off by default (same local
+  curl-testing workflow as before), but closes the gap where anyone
+  could call this webhook directly, pretending to be any phone number.
+- `POST /api/admin/incidents/{id}/response` no longer accepts caller-
+  supplied `recipients` for `sms`/`voice` — they're now always resolved
+  from the report's own region's real subscribers, closing what was
+  effectively an open SMS/voice relay against the org's paid Africa's
+  Talking account.
+- `POST /api/hazard-reports/{id}/photo` now validates the uploaded file's
+  actual magic bytes, not just its claimed `Content-Type` header.
+- CORS is now restrictable via `CORS_ALLOWED_ORIGINS` (still defaults to
+  `*` if unset).
+
 **Status (as of 2026-09-07): the AfriShield Admin Command Center API is
 real.** Admin signup/login (JWT bearer tokens), incident management
 (status workflow, evidence verification), AI-explainable priority/triage
@@ -231,6 +275,7 @@ via `backend/app/data/devices.json`, then calls the same scoring function
 ```json
 {
   "device_id": "esp32-demo-01",
+  "device_key": "4b6f310ce39fe80edc96aea8dce01438",
   "rainfall_mm_24h": 85.0,
   "river_level_m": 3.2,
   "timestamp": "2026-08-17T09:00:00Z"
@@ -240,6 +285,7 @@ via `backend/app/data/devices.json`, then calls the same scoring function
 | Field             | Type   | Notes                                                        |
 |-------------------|--------|------------------------------------------------------------------|
 | `device_id`       | string | Must match a `device_id` in `backend/app/data/devices.json` — 404 otherwise. |
+| `device_key`      | string | **New, 2026-09-07.** Must match that device's `device_key` in `devices.json` — `401` otherwise. Closes a real gap: `device_id` alone used to be enough, and the demo device's id is published in this repo's own README, so anyone could have spoofed a reading and triggered a real automatic alert. Generate one per device with `python -c "import secrets; print(secrets.token_hex(16))"`. |
 | `rainfall_mm_24h` | float  | Same `allow_inf_nan=False` constraint as `/api/risk-check` — a NaN/Infinity reading gets a clean 422, not a crash. |
 | `river_level_m`   | float  | Same constraint as above.                                         |
 | `timestamp`       | string | The device's own clock (e.g. Wokwi's simulated NTP time). Accepted and validated, but not echoed in the response — see below. |
@@ -364,7 +410,8 @@ nothing.
     "location_name": "Lagos, Nigeria",
     "risk_level": "high",
     "message_sent": "Flood risk is HIGH in Lagos. Move to higher ground and avoid riverbanks. Prioritize children, elderly people, and pregnant or nursing individuals when evacuating.",
-    "channel": "SMS (simulated)",
+    "sms_status": "simulated",
+    "voice_status": "simulated",
     "recipients": 1,
     "timestamp": "2026-08-17T07:47:30Z",
     "trigger": "manual",
@@ -378,54 +425,85 @@ nothing.
 | `location_name`  | string |                                                  |
 | `risk_level`     | string | `"low"` \| `"medium"` \| `"high"`              |
 | `message_sent`   | string | The exact text that was (or would have been) sent/said, in the region's local language |
-| `channel`        | string | `"SMS"` / `"Voice call"` when actually sent via Africa's Talking, `"SMS (simulated)"` / `"Voice call (simulated)"` when not (no credentials configured, or zero subscribers for that region) — see `POST /api/alerts/send` |
+| `sms_status`     | string | **Replaced the single `channel` field, 2026-09-09.** `"sent"`, `"simulated"` (Africa's Talking SMS not configured), `"failed"`, or `"no_recipients"` — see `POST /api/alerts/send` |
+| `voice_status`   | string | Same vocabulary as `sms_status`, for the voice call. **Every send now does both, always** — voice is no longer an opt-in `channel`. |
 | `recipients`     | int    | **Only present on real-send-log entries.** Number of subscribers the message went to (0 for a simulated send). Absent on the older hardcoded `mock-data.json` entries returned as a fallback — don't assume it's always present. |
 | `timestamp`      | string | ISO 8601, UTC                                   |
 | `trigger`        | string | **New (2026-08-18).** `"manual"` (a person called `POST /api/alerts/send`) or `"automatic"` (a sensor reading pushed the region into `high` — see `POST /api/sensor-reading`). Only present on real-send-log entries, same caveat as `recipients`. |
-| `push_status`    | string | **New (2026-08-28).** `"sent"` (real FCM push delivered), `"simulated"` (devices registered, but no Firebase project configured), `"failed"`, or `"no_recipients"` (no device registered for this region via `POST /api/push-tokens`). Push is additive to whichever `channel` was used, not a separate channel. Only present on real-send-log entries, same caveat as `recipients`. |
+| `push_status`    | string | **New (2026-08-28).** `"sent"` (real FCM push delivered), `"simulated"` (devices registered, but no Firebase project configured), `"failed"`, or `"no_recipients"` (no device registered for this region via `POST /api/push-tokens`). Push is additive alongside SMS/voice, not a separate channel choice. Only present on real-send-log entries, same caveat as `recipients`. |
+
+Log entries written before 2026-09-09 still have the old single
+`channel` field instead of `sms_status`/`voice_status` — `alert_log.json`
+is gitignored runtime state, never migrated retroactively; a fresh clone
+only ever produces the new shape.
 
 ---
 
 ## `POST /api/alerts/send`
 
 Sends a flood alert for one monitored region to every subscriber
-registered for it, via Africa's Talking — SMS or a voice call that reads
-the alert aloud (`channel: "voice"`; see `POST /api/voice/callback`
-below), the latter for recipients a text-only channel doesn't reach
-(can't read, or the local script, or are visually impaired). Real when
-the matching credentials are configured (see `backend/.env.example`) and
-the region has at least one subscriber; otherwise falls back to a clearly
-labeled simulation so this is always safe to call.
+registered for it, via Africa's Talking. **As of 2026-09-09, every
+subscriber gets both a text message and a voice call that reads the
+alert aloud, always** — voice used to be a `channel` an admin had to
+opt into per send; now it's additive, like push. Voice exists in this
+project specifically for people a text-only channel doesn't reach
+(can't read, don't read the local script, are visually impaired) —
+making it opt-in meant that accessibility only happened when someone
+remembered to choose it. Each channel independently falls back to a
+clearly labeled simulation when its Africa's Talking credentials aren't
+configured, or the region has zero subscribers, so this is always safe
+to call.
 
 Also pushes a real notification (Firebase Cloud Messaging) to every
-device registered for this region via `POST /api/push-tokens`, regardless
-of `channel` — push is additive, not a third channel choice, since a
-device can want push *and* SMS at once. See `push_status` below.
+device registered for this region via `POST /api/push-tokens`, additive
+alongside SMS/voice the same way. See `push_status` below.
 
 ### Request
 
 ```json
 {
-  "location_name": "Lagos, Nigeria",
-  "channel": "sms"
+  "location_name": "Lagos, Nigeria"
 }
 ```
 
 | Field           | Type   | Notes                                                        |
 |-----------------|--------|----------------------------------------------------------------|
 | `location_name` | string | Must exactly match a `location_name` in `backend/app/data/regions.json` — 404 otherwise. |
-| `channel`       | string | `"sms"` (default) or `"voice"`. |
+
+**Breaking change (2026-09-09): `channel` is no longer accepted** —
+there's nothing left to pick, since both channels always fire.
 
 ### Response
 
-Same shape as one entry of `GET /api/alerts`, above (includes `recipients`
-and `trigger`). Calling this endpoint directly always logs
-`"trigger": "manual"` — see `POST /api/sensor-reading` for the automatic
-counterpart.
+```json
+{
+  "location_name": "Maputo, Mozambique",
+  "risk_level": "low",
+  "message_sent": "O risco de inundação é BAIXO em Maputo. Nenhuma ação é necessária neste momento.",
+  "sms_status": "sent",
+  "voice_status": "simulated",
+  "recipients": 1,
+  "timestamp": "2026-09-09T12:40:34Z",
+  "trigger": "manual",
+  "push_status": "no_recipients"
+}
+```
+
+**Breaking change (2026-09-09): the single `channel` field (e.g.
+`"SMS (simulated)"`) was replaced with independent `sms_status` and
+`voice_status` fields**, each one of `"sent"`, `"simulated"` (Africa's
+Talking not configured for that channel), `"failed"` (a real send was
+attempted and errored — e.g. a malformed phone number the SDK rejects
+client-side), or `"no_recipients"`. Same vocabulary `push_status` already
+used, now shared by all three channels. Calling this endpoint directly
+always logs `"trigger": "manual"` — see `POST /api/sensor-reading` for
+the automatic counterpart.
 
 Recipients come from `backend/app/data/subscribers.json` — a list of
 `{"phone_number": ..., "location_name": ...}` pairs, populated by
-`POST /api/ussd`'s subscribe flow (or seeded by hand for testing).
+`POST /api/subscribers` (requires phone verification — see that
+endpoint) or `POST /api/ussd`'s subscribe flow (no verification needed
+there — a real USSD session's phone number is asserted by the carrier).
 
 ---
 
@@ -472,6 +550,102 @@ satisfied either way.
 
 ---
 
+## `POST /api/subscribers/verify/request`
+
+**New, 2026-09-07.** Step 1 of subscribing or unsubscribing a phone
+number: sends a 6-digit code to prove the caller actually controls it.
+Closes a real gap — `POST`/`DELETE /api/subscribers` below used to have
+no ownership check at all, so anyone could subscribe *or unsubscribe*
+any real phone number just by knowing it.
+
+### Request
+
+```json
+{ "phone_number": "+15551234567" }
+```
+
+### Response
+
+```json
+{ "sent": true, "simulated": false }
+```
+
+`202 Accepted`. Real SMS via the same `sms_gateway` `POST /api/alerts/send`
+uses, when Africa's Talking is configured. **When it isn't**, the code
+comes back directly in the response instead of pretending one was sent:
+
+```json
+{
+  "sent": false,
+  "simulated": true,
+  "code": "485708",
+  "note": "SMS is not configured on this server — code shown here for testing only, never in a real deployment."
+}
+```
+
+The code expires after 10 minutes and is single-use — consumed by
+`POST /api/subscribers` or `DELETE /api/subscribers/{phone_number}`
+below, whichever the caller does next, and invalidated either way (a
+wrong guess also burns it, so request a fresh one after a mistake).
+`502` if Africa's Talking is configured but the send itself fails (e.g.
+a malformed `phone_number` the SDK rejects client-side).
+
+---
+
+## `POST /api/subscribers`
+
+Registers a phone number for SMS/voice flood alerts for a region — the
+smartphone-app equivalent of the USSD "Subscribe to alerts" menu below,
+for a user who enters their number during onboarding instead of dialing
+a USSD code.
+
+### Request
+
+```json
+{
+  "phone_number": "+15551234567",
+  "location_name": "Lagos, Nigeria",
+  "code": "485708"
+}
+```
+
+| Field           | Type   | Notes                                                        |
+|-----------------|--------|------------------------------------------------------------------|
+| `phone_number`  | string | A number already registered elsewhere is moved to this region rather than duplicated — one region at a time, matching `POST /api/push-tokens`. |
+| `location_name` | string | Freeform — not required to already exist in `regions.json`.      |
+| `code`          | string | **New, 2026-09-07.** From `POST /api/subscribers/verify/request` for this same `phone_number`, matching and not yet expired. `400` otherwise. |
+
+### Response
+
+`201 Created`, echoes `phone_number`/`location_name`.
+
+---
+
+## `DELETE /api/subscribers/{phone_number}`
+
+Removes a phone number from SMS/voice alerts.
+
+### Request
+
+Query parameter `code` (required, **new 2026-09-07**) — same
+verification code flow as `POST /api/subscribers` above. `400` if
+missing, wrong, or expired. This is the more important half of the
+fix: previously *removing* someone from real flood warnings needed no
+proof at all, which is about as bad an outcome as this system could
+produce.
+
+### Response
+
+```json
+{ "removed": true }
+```
+
+Always `200` once the code checks out, whether or not the number was
+actually registered — same end-state-satisfied contract as
+`DELETE /api/push-tokens/{token}`.
+
+---
+
 ## `POST /api/ussd`
 
 Africa's Talking USSD webhook — point a sandbox USSD channel's callback
@@ -479,6 +653,21 @@ URL at this endpoint. Lets a subscriber, from any phone (no smartphone or
 data connection needed), check a region's flood risk or subscribe/
 unsubscribe to SMS alerts for it. This is the "last-mile" self-service
 counterpart to `POST /api/alerts/send`'s push side.
+
+**Optional HTTP Basic Auth, new 2026-09-07.** Set
+`USSD_WEBHOOK_USERNAME`/`USSD_WEBHOOK_PASSWORD` in `.env` and embed them
+in the callback URL you register with Africa's Talking
+(`https://user:pass@yourdomain.com/api/ussd`) — `401` on a missing or
+wrong credential once set. Off by default (matches this doc's own
+"tested locally via raw curl" workflow), but closes a real gap: without
+it, anyone on the internet could call this endpoint directly, supplying
+any `phoneNumber` they like, and use the menu below to subscribe or
+unsubscribe a real number they don't own. The subscribe/unsubscribe
+menu itself deliberately does **not** also require the new
+`POST /api/subscribers` verification code — a real USSD session's
+`phoneNumber` is asserted by the telecom carrier through Africa's
+Talking's actual infrastructure, not attacker-controlled, once this
+webhook itself is protected.
 
 ### Request
 
@@ -675,7 +864,11 @@ Multipart form data, one field:
 |---------|------|-------------------------------------------------------------------|
 | `photo` | file | JPEG, PNG, or WebP only (`415` otherwise); max 8MB (`413` otherwise). |
 
-`404` if `report_id` doesn't match an existing report.
+`404` if `report_id` doesn't match an existing report. **As of
+2026-09-07, the JPEG/PNG/WebP check is done by reading the file's actual
+magic bytes, not by trusting the `Content-Type` header the client
+sends** — that header is easy to spoof (e.g. an HTML/script file
+uploaded labeled `image/jpeg` used to pass this check).
 
 ### Response
 
@@ -741,14 +934,20 @@ login call needed right after signing up).
 {
   "name": "Habiba",
   "email": "habiba@afrishield-command.com",
-  "password": "supersecret1"
+  "password": "supersecret1",
+  "signup_code": "the-shared-team-invite-code"
 }
 ```
 
 `password` must be at least 8 characters (`422` otherwise). `email` must
 be a syntactically valid address (validated server-side); it's the unique
 key for an admin account — signing up again with the same email is a
-`409`.
+`409`. **`signup_code` is required as of 2026-09-07** — must match
+`ADMIN_SIGNUP_CODE` in `backend/.env` (`403` if wrong). If the server has
+no `ADMIN_SIGNUP_CODE` configured at all, signup is disabled outright
+(`503`) rather than silently open to anyone. This closes a real gap:
+signup previously had no gate at all, so any internet user could create
+a full admin account.
 
 ### Response
 
@@ -800,6 +999,23 @@ without re-sending credentials.
   "created_at": "2026-09-07T07:08:36Z"
 }
 ```
+
+---
+
+## `POST /api/admin/logout`
+
+**New, 2026-09-07.** Revokes the calling token immediately (adds its
+`jti` claim to `app/data/revoked_jtis.json`), rather than leaving a
+"logged out" token usable until its natural 24h expiry.
+
+### Response
+
+```json
+{ "logged_out": true }
+```
+
+`200 OK`. Same `401`s as any other authenticated route for a missing/
+invalid/expired/already-revoked token.
 
 ---
 
@@ -1002,12 +1218,13 @@ history.
 {
   "channel": "sms",
   "message": "Help is on the way, stay where you are",
-  "recipients": ["+2348012345678"]
+  "recipients": ["Lagos FM"]
 }
 ```
 
 `channel` is one of `sms`, `voice`, `radio`, `community_leader`.
-`recipients` is optional (empty/omitted is valid — see below).
+`recipients` is **only used for `radio`/`community_leader`** (freeform
+station/leader names) — see below for why `sms`/`voice` ignore it.
 
 ### Response
 
@@ -1016,22 +1233,32 @@ history.
   "id": "a2a6db2f6adb401c9c395c9314522cc8",
   "channel": "sms",
   "message": "Help is on the way, stay where you are",
-  "recipients": ["+2348012345678"],
-  "status": "simulated",
+  "recipients": ["+258841234567"],
+  "status": "sent",
   "sent_at": "2026-09-07T07:09:01Z",
   "sent_by": "habiba@afrishield-command.com"
 }
 ```
 
-`201 Created`. `sms`/`voice` reuse the exact same Africa's Talking
-gateways `POST /api/alerts/send` uses — a real send (`"status": "sent"`)
-if `recipients` are given and Africa's Talking is configured, a clearly
-labeled `"simulated"` send otherwise (no recipients, or no credentials
-configured). **`radio` and `community_leader` have no real dispatch
-integration at all** — no radio-station API or community-leader contact
-system has ever been built for this project — so a response on either
-channel is **always** `"simulated"`, logged honestly rather than
-pretending a real broadcast or call happened. Also advances the report's
+`201 Created`. **As of 2026-09-07, `sms`/`voice` recipients are always
+resolved from `subscribers.json` for the report's own region — never
+from a caller-supplied list.** Previously an admin could pass an
+arbitrary `recipients` array, which (combined with the also-just-fixed
+open admin signup) turned this endpoint into an open SMS/voice relay
+against the org's paid Africa's Talking account, able to message any
+phone number at all, not just people actually affected by this
+incident. Real send (`"status": "sent"`) if the region has subscribers
+and Africa's Talking is configured; `"simulated"` if it's not
+configured; `"no_recipients"` if the region genuinely has none
+registered — never a fabricated success either way.
+
+`radio` and `community_leader` still take `recipients` as freeform text
+— there's no paid per-message API behind either, so there's no abuse
+surface to close there. **Both have no real dispatch integration at
+all** — no radio-station API or community-leader contact system has
+ever been built for this project — so a response on either channel is
+**always** `"simulated"`, logged honestly rather than pretending a real
+broadcast or call happened. Also advances the report's
 `status` to `"responding"` if it's still earlier in the workflow (never
 moves a `"resolved"` report backward).
 

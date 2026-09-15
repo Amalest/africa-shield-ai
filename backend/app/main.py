@@ -1,11 +1,13 @@
 import math
+import sys
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.routes import admin_auth, admin_reports, alerts, hazard_reports, push_tokens, regions, risk, sensors, subscribers, ussd, voice
+from app.config import CORS_ALLOWED_ORIGINS
+from app.routes import admin_auth, admin_devices, admin_reports, alerts, hazard_reports, pending_alerts, push_tokens, regions, risk, sensors, subscribers, ussd, voice
 
 app = FastAPI(
     title="Africa Shield AI - Last-Mile Alert API",
@@ -27,12 +29,22 @@ app = FastAPI(
         "POST /api/push-tokens registers a device for real push notifications "
         "(Firebase Cloud Messaging) alongside SMS/voice, when configured — see "
         ".env.example; DELETE /api/push-tokens/{token} unregisters one. "
-        "POST /api/subscribers registers a phone number for SMS/voice alerts for "
-        "a region (the smartphone-app equivalent of the USSD 'Subscribe' menu); "
-        "DELETE /api/subscribers/{phone_number} unregisters one. "
-        "POST /api/admin/signup and POST /api/admin/login create/authenticate an "
-        "AfriShield Admin Command Center account, returning a bearer token; every "
-        "/api/admin/* route below requires it. GET /api/admin/dashboard/stats, "
+        "POST /api/subscribers/verify/request sends a one-time code to a phone "
+        "number (real SMS if configured, returned directly in the response if not); "
+        "POST /api/subscribers (requires that code) registers a phone number for "
+        "SMS/voice alerts for a region (the smartphone-app equivalent of the USSD "
+        "'Subscribe' menu); DELETE /api/subscribers/{phone_number} (also requires "
+        "a fresh code) unregisters one — both require proof of phone ownership so "
+        "nobody can subscribe or unsubscribe a number that isn't theirs. "
+        "POST /api/admin/signup (requires a shared ADMIN_SIGNUP_CODE, and only works "
+        "once — permanently locked once any admin account exists) creates the very "
+        "first AfriShield Admin Command Center account. Every admin after that is "
+        "created by an existing admin via POST /api/admin/admins (also lists them: "
+        "GET /api/admin/admins) — there is no public self-service signup. "
+        "POST /api/admin/login authenticates, returning a bearer token; every "
+        "/api/admin/* route below requires it. POST /api/admin/logout revokes the "
+        "calling token immediately. "
+        "GET /api/admin/dashboard/stats, "
         "GET /api/admin/incidents/prioritized (AI triage, ranked, with an "
         "explainable factor breakdown), GET /api/admin/incidents/map, "
         "PATCH /api/admin/incidents/{id}/status, POST /api/admin/incidents/{id}/verify, "
@@ -41,15 +53,39 @@ app = FastAPI(
         "POST /api/admin/incidents/{id}/response (sms/voice/radio/community_leader), "
         "and GET /api/admin/incidents/{id}/responses cover incident management for "
         "the admin dashboard, built on top of the same hazard-report records as "
-        "POST/GET /api/hazard-reports above."
+        "POST/GET /api/hazard-reports above. "
+        "GET /api/admin/devices lists registered flood sensors with their most "
+        "recent reading and an online/offline status. "
+        "A sensor reading that crosses into 'high' risk no longer auto-sends a "
+        "community alert — it creates a pending alert instead (operators are "
+        "notified by SMS) and auto-sends only if nobody reviews it in time: "
+        "GET /api/admin/alerts/pending (awaiting review), "
+        "GET /api/admin/alerts/pending/history (every outcome, for audit), "
+        "POST /api/admin/alerts/{id}/approve, "
+        "POST /api/admin/alerts/{id}/edit-and-send (operator-edited wording), and "
+        "POST /api/admin/alerts/{id}/reject (requires a reason) resolve one."
     ),
     version="0.1.0",
 )
 
-# Wide-open CORS for local hackathon development. Tighten before any real deployment.
+# Restrict to CORS_ALLOWED_ORIGINS (comma-separated) when set — see
+# app/config.py. Falls back to "*" (any origin) for local hackathon
+# development if unset, since the dashboard's deployed URL isn't fixed
+# yet; a wildcard here means any website can read responses from every
+# public GET endpoint, including hazard-report GPS/needs_assistance data.
+if CORS_ALLOWED_ORIGINS:
+    _allowed_origins = [origin.strip() for origin in CORS_ALLOWED_ORIGINS.split(",") if origin.strip()]
+else:
+    _allowed_origins = ["*"]
+    print(
+        "NOTE: CORS_ALLOWED_ORIGINS is unset — allowing requests from any origin. "
+        "Set it to your dashboard's real URL(s) before a real deployment.",
+        file=sys.stderr,
+    )
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_allowed_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -65,6 +101,8 @@ app.include_router(push_tokens.router)
 app.include_router(subscribers.router)
 app.include_router(admin_auth.router)
 app.include_router(admin_reports.router)
+app.include_router(pending_alerts.router)
+app.include_router(admin_devices.router)
 
 
 @app.exception_handler(RequestValidationError)
@@ -101,9 +139,11 @@ def root() -> dict:
             "/api/hazard-reports/{id}",
             "/api/hazard-reports/{id}/photo",
             "/api/push-tokens",
+            "/api/subscribers/verify/request",
             "/api/subscribers",
             "/api/admin/signup",
             "/api/admin/login",
+            "/api/admin/logout",
             "/api/admin/me",
             "/api/admin/dashboard/stats",
             "/api/admin/incidents/prioritized",

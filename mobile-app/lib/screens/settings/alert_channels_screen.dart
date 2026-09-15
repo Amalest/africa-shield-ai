@@ -8,11 +8,13 @@ import '../../providers/region_provider.dart';
 import '../../providers/region_selection.dart';
 import '../../providers/settings_provider.dart';
 import '../../services/push_service.dart';
+import '../../services/subscriber_service.dart';
 import '../../theme/app_theme.dart';
 
-/// Matches the Figma "Alert Channels" screen. SMS and "Mobile App" (real
-/// push notifications, via `PushService`) are real; WhatsApp and USSD are
-/// still switches with nothing behind them yet — see `todo.md`.
+/// Matches the Figma "Alert Channels" screen. SMS (via `SubscriberService`)
+/// and "Mobile App" (real push notifications, via `PushService`) are real;
+/// WhatsApp and USSD are still switches with nothing behind them yet — see
+/// `todo.md`.
 class AlertChannelsScreen extends StatefulWidget {
   const AlertChannelsScreen({super.key});
 
@@ -26,7 +28,10 @@ class _AlertChannelsScreenState extends State<AlertChannelsScreen> {
   static const _smsKey = 'channel_sms_v1';
   static const _ussdKey = 'channel_ussd_v1';
 
-  final _pushService = PushService();
+  late final _pushService = PushService(
+    onMessage: () => context.read<RegionProvider>().load(),
+  );
+  final _subscriberService = SubscriberService();
 
   bool _mobileApp = false;
   bool _whatsapp = false;
@@ -34,6 +39,7 @@ class _AlertChannelsScreenState extends State<AlertChannelsScreen> {
   bool _ussd = false;
   bool _loaded = false;
   bool _togglingPush = false;
+  bool _togglingSms = false;
 
   @override
   void initState() {
@@ -46,7 +52,12 @@ class _AlertChannelsScreenState extends State<AlertChannelsScreen> {
     setState(() {
       _mobileApp = prefs.getBool(_mobileAppKey) ?? false;
       _whatsapp = prefs.getBool(_whatsappKey) ?? false;
-      _sms = prefs.getBool(_smsKey) ?? true;
+      // SMS's stored preference is just a UI hint now, not proof of a real
+      // registration — verifying a phone number needs the user present
+      // (see _onToggleSms), so this screen can no longer silently
+      // (re-)register in the background the way it used to. Default to
+      // false rather than true: an unverified "on" would be misleading.
+      _sms = prefs.getBool(_smsKey) ?? false;
       _ussd = prefs.getBool(_ussdKey) ?? false;
       _loaded = true;
     });
@@ -108,6 +119,132 @@ class _AlertChannelsScreenState extends State<AlertChannelsScreen> {
     }
   }
 
+  /// Same immediate-effect contract as `_onToggleMobileApp`: a real
+  /// registration/unregistration against `POST /api/subscribers`, not
+  /// just a stored preference. Needs a phone number from onboarding
+  /// (Settings > Location, same screen that captures it) — without one
+  /// there's nothing to register, so this refuses rather than silently
+  /// pretending SMS is on.
+  ///
+  /// Both directions now require verifying phone-number ownership first
+  /// (the backend rejects an unverified subscribe *or* unsubscribe) — the
+  /// server used to let anyone add or remove any phone number with no
+  /// proof at all, which for *removing* someone from real flood alerts is
+  /// about as bad an outcome as this system could produce. So this always
+  /// requests a code and prompts for it before calling
+  /// `enable`/`disable`, even when turning SMS *off*.
+  Future<void> _onToggleSms(bool value) async {
+    final l10n = AppLocalizations.of(context)!;
+    final onboarding = context.read<OnboardingProvider>();
+    final phoneNumber = onboarding.phoneNumber;
+    if (phoneNumber == null || phoneNumber.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(l10n.smsNoPhoneYet)));
+      return;
+    }
+
+    String? regionLocationName;
+    if (value) {
+      final regionProvider = context.read<RegionProvider>();
+      final settings = context.read<SettingsProvider>();
+      final picked = pickMyRegion(regions: regionProvider.regions, settings: settings, onboarding: onboarding);
+      if (picked == null || !picked.isRealMatch) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(l10n.smsNoRegionYet)));
+        return;
+      }
+      regionLocationName = picked.region.locationName;
+    }
+
+    setState(() => _togglingSms = true);
+    final codeResult = await _subscriberService.requestCode(phoneNumber);
+    if (!mounted) return;
+    if (!codeResult.ok) {
+      setState(() => _togglingSms = false);
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(l10n.smsCodeRequestFailed)));
+      return;
+    }
+
+    final code = await _promptForCode(phoneNumber: phoneNumber, simulatedCode: codeResult.simulatedCode);
+    if (!mounted) return;
+    if (code == null) {
+      setState(() => _togglingSms = false);
+      return;
+    }
+
+    if (value) {
+      final ok = await _subscriberService.enable(phoneNumber, regionLocationName!, code);
+      if (!mounted) return;
+      setState(() {
+        _togglingSms = false;
+        if (ok) _sms = true;
+      });
+      if (!ok) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(l10n.smsRegistrationFailed)));
+        return;
+      }
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(_smsKey, true);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(l10n.smsEnabled)));
+    } else {
+      final ok = await _subscriberService.disable(phoneNumber, code);
+      if (!mounted) return;
+      setState(() => _togglingSms = false);
+      if (!ok) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(l10n.smsRegistrationFailed)));
+        return;
+      }
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(_smsKey, false);
+      if (!mounted) return;
+      setState(() => _sms = false);
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(l10n.smsDisabled)));
+    }
+  }
+
+  /// Prompts for the 6-digit code just requested. Pre-fills it when the
+  /// backend returned one directly (`simulatedCode` — SMS isn't
+  /// configured server-side, same "shown here for testing only" honesty
+  /// pattern as the backend itself uses) so testing this flow doesn't
+  /// require a real Africa's Talking account; otherwise starts empty,
+  /// since a real code only exists in the SMS the user just received.
+  /// Returns `null` if the user cancels.
+  Future<String?> _promptForCode({required String phoneNumber, String? simulatedCode}) {
+    final l10n = AppLocalizations.of(context)!;
+    final controller = TextEditingController(text: simulatedCode ?? '');
+    return showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(l10n.smsCodeDialogTitle),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(l10n.smsCodeDialogBody(phoneNumber)),
+            if (simulatedCode != null) ...[
+              const SizedBox(height: 8),
+              Text(l10n.smsCodeSimulatedNote, style: const TextStyle(color: AppColors.riskMedium, fontSize: 12)),
+            ],
+            const SizedBox(height: 12),
+            TextField(
+              controller: controller,
+              keyboardType: TextInputType.number,
+              maxLength: 6,
+              decoration: InputDecoration(hintText: l10n.smsCodeHint),
+              autofocus: simulatedCode == null,
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dialogContext, null), child: Text(l10n.cancelButton)),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, controller.text.trim()),
+            child: Text(l10n.smsCodeSubmitButton),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     if (!_loaded) {
@@ -146,10 +283,10 @@ class _AlertChannelsScreenState extends State<AlertChannelsScreen> {
             icon: Icons.sms_outlined,
             title: l10n.smsChannelTitle,
             subtitle: l10n.smsChannelSubtitle,
-            enabled: true,
+            enabled: !_togglingSms,
             note: l10n.smsRealNote,
             value: _sms,
-            onChanged: (v) => setState(() => _sms = v),
+            onChanged: _onToggleSms,
           ),
           _ChannelTile(
             icon: Icons.dialpad,

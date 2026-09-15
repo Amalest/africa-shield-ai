@@ -38,6 +38,9 @@
   "lgaFieldHint": "Enter your local government area",
   "cityFieldLabel": "City / Community",
   "cityFieldHint": "Enter your city / community",
+  "phoneFieldLabel": "Phone Number",
+  "phoneFieldHint": "e.g. +234 800 000 0000",
+  "phoneFieldNote": "Optional — only needed for SMS, voice call, or USSD alerts. Push notifications don't require it.",
   "orDivider": "OR",
   "useMyCurrentLocation": "Use my current location",
   "gpsCapturedNote": "GPS captured: {lat}, {lon}. There's no address lookup yet, so please still fill in your state/LGA/city below.",
@@ -224,6 +227,22 @@
   "smsChannelTitle": "SMS",
   "smsChannelSubtitle": "Receive alerts via SMS even without internet.",
   "smsRealNote": "Real — sent via Africa's Talking.",
+  "smsNoPhoneYet": "Add a phone number in Settings > Location first — SMS needs one to send to.",
+  "smsNoRegionYet": "No monitored region for you yet, so SMS can't be set up.",
+  "smsRegistrationFailed": "Couldn't register your number for SMS alerts — check your connection and try again.",
+  "smsEnabled": "SMS alerts enabled for this number.",
+  "smsDisabled": "SMS alerts turned off.",
+  "smsCodeRequestFailed": "Couldn't request a verification code — check your connection and try again.",
+  "smsCodeDialogTitle": "Enter verification code",
+  "smsCodeDialogBody": "We sent a 6-digit code to {phone}. Enter it below to continue.",
+  "@smsCodeDialogBody": {
+    "placeholders": {
+      "phone": { "type": "String" }
+    }
+  },
+  "smsCodeSimulatedNote": "SMS isn't configured on the server — this code is shown here for testing only.",
+  "smsCodeHint": "6-digit code",
+  "smsCodeSubmitButton": "Verify",
   "ussdChannelTitle": "USSD",
   "ussdChannelSubtitle": "Receive alerts on basic feature phones.",
   "ussdNote": "Built, but not yet verified against a real carrier.",

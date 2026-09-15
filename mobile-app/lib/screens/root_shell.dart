@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_gen/gen_l10n/app_localizations.dart';
+import 'package:provider/provider.dart';
 
+import '../providers/region_provider.dart';
 import '../theme/app_theme.dart';
 import 'alerts_screen.dart';
 import 'home_screen.dart';
@@ -17,7 +19,7 @@ class RootShell extends StatefulWidget {
   State<RootShell> createState() => _RootShellState();
 }
 
-class _RootShellState extends State<RootShell> {
+class _RootShellState extends State<RootShell> with WidgetsBindingObserver {
   int _index = 0;
 
   static const _screens = [
@@ -26,6 +28,30 @@ class _RootShellState extends State<RootShell> {
     RiskMapScreen(),
     ReportsScreen(),
   ];
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  /// Refreshes region/alert data whenever the app comes back to the
+  /// foreground — e.g. after the user taps a push notification, or just
+  /// switches back to a backgrounded tab. Without this, a push arriving
+  /// while the app was backgrounded never shows up on Home until the user
+  /// manually navigates away and back (there's no live polling).
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      context.read<RegionProvider>().load();
+    }
+  }
 
   @override
   Widget build(BuildContext context) {

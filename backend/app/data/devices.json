@@ -1,6 +1,7 @@
 [
   {
     "device_id": "esp32-demo-01",
+    "device_key": "4b6f310ce39fe80edc96aea8dce01438",
     "location_name": "Lagos, Nigeria",
     "latitude": 6.5244,
     "longitude": 3.3792

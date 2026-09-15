@@ -21,7 +21,9 @@ from app.models.priority_model import compute_priority
 from app.models.risk_model import compute_risk
 from app.models.sms_gateway import is_configured as is_sms_configured, send_sms
 from app.models.voice_gateway import is_configured as is_voice_configured, place_call
-from app.routes.hazard_reports import read_hazard_reports, write_hazard_reports
+from app.routes.hazard_reports import notify_reporter, read_hazard_reports, write_hazard_reports
+from app.routes.pending_alerts import _read_pending as _read_pending_alerts
+from app.routes.subscribers import read_subscribers
 
 router = APIRouter()
 
@@ -49,6 +51,10 @@ class AssignRequest(BaseModel):
 class SendResponseRequest(BaseModel):
     channel: ResponseChannel
     message: str
+    # Only meaningful for radio/community_leader (station names, leader
+    # contacts — freeform, not dialed via a paid API). Ignored for
+    # sms/voice: see send_incident_response()'s docstring for why letting
+    # an admin pick arbitrary phone numbers here was a real vulnerability.
     recipients: list[str] | None = None
 
 
@@ -104,11 +110,14 @@ def dashboard_stats(current_admin: dict = Depends(get_current_admin)) -> dict:
         status = report.get("status", "new")
         by_status[status] = by_status.get(status, 0) + 1
 
+    pending_alerts_count = sum(1 for p in _read_pending_alerts() if p["status"] == "pending")
+
     return {
         "total_reports": len(reports),
         "critical_or_high_priority": sum(1 for level in priority_levels if level in ("critical", "high")),
         "assistance_needed": sum(1 for r in reports if r.get("needs_assistance")),
         "resolved": by_status.get("resolved", 0),
+        "pending_alerts": pending_alerts_count,
         "by_status": by_status,
     }
 
@@ -172,7 +181,12 @@ def update_incident_status(
     if evidence turns out to need another look) — this endpoint records
     what happened, it doesn't enforce a strict state machine. Every change
     is appended to `status_history` with who made it and when, so the full
-    timeline is always reconstructable."""
+    timeline is always reconstructable.
+
+    Also texts the original reporter when the new status is `"resolved"`
+    and they left a phone number — closing the loop back to the specific
+    person who reported, not just the region's subscriber list (see
+    `notify_reporter()` in `app/routes/hazard_reports.py`)."""
     reports = read_hazard_reports()
     report = _get_report_or_404(reports, report_id)
 
@@ -184,6 +198,10 @@ def update_incident_status(
             "changed_by": current_admin["email"],
         }
     )
+    if payload.status == "resolved" and report.get("phone_number"):
+        message = f"AfriShield: Your report near {report['location_name']} has been marked resolved. Thank you for reporting it."
+        report.setdefault("reporter_notifications", []).append(notify_reporter(report["phone_number"], message))
+
     write_hazard_reports(reports)
     return report
 
@@ -245,7 +263,13 @@ def assign_incident(
     `assistance-requests` because that's its primary use case). Sets
     `status` to `"assigned"` and records the change in `status_history`,
     same as `PATCH .../status` would, so assigning is a one-call action
-    rather than assign-then-separately-update-status."""
+    rather than assign-then-separately-update-status.
+
+    Also texts the original reporter, if they left a phone number, that
+    help is on the way — the other half of closing the loop back to the
+    specific person who reported (see `notify_reporter()` in
+    `app/routes/hazard_reports.py`; `PATCH .../status` handles the
+    "resolved" half)."""
     reports = read_hazard_reports()
     report = _get_report_or_404(reports, report_id)
 
@@ -260,6 +284,10 @@ def assign_incident(
             "notes": f"Assigned to {payload.assigned_to}" + (f" ({payload.team})" if payload.team else "") + (f" — {payload.notes}" if payload.notes else ""),
         }
     )
+    if report.get("phone_number"):
+        message = f"AfriShield: Help has been assigned to your report near {report['location_name']} and is on the way."
+        report.setdefault("reporter_notifications", []).append(notify_reporter(report["phone_number"], message))
+
     write_hazard_reports(reports)
     return report
 
@@ -274,10 +302,20 @@ def send_incident_response(
     or `community_leader`, and appends it to the report's response
     history (`GET .../responses`).
 
-    `sms`/`voice` reuse the exact same Africa's Talking gateways
-    `POST /api/alerts/send` uses — a real send if `recipients` (phone
-    numbers) are given and Africa's Talking is configured, a clearly
-    labeled `"simulated"` send otherwise. `radio` and `community_leader`
+    **`sms`/`voice` recipients are always resolved from
+    `subscribers.json` for the report's own region — never from a
+    caller-supplied list.** Earlier this endpoint let an admin pass an
+    arbitrary `recipients` array, which (combined with self-registerable
+    admin accounts) turned this into an open SMS/voice relay against the
+    org's paid Africa's Talking account, able to message any phone number
+    at all, not just people actually affected by this incident. Real send
+    if the region has subscribers and Africa's Talking is configured, a
+    clearly labeled `"simulated"` send otherwise (`"no_recipients"` if the
+    region genuinely has none registered).
+
+    `radio` and `community_leader` still take `recipients` as freeform
+    text (station names, leader contacts) — there's no paid per-message
+    API behind either, so there's no abuse surface to close there. Both
     have no real dispatch integration at all (no radio station API or
     community-leader contact system has ever been built for this
     project) — every response on either channel is always `"simulated"`,
@@ -290,21 +328,29 @@ def send_incident_response(
     reports = read_hazard_reports()
     report = _get_report_or_404(reports, report_id)
 
-    recipients = payload.recipients or []
-    if payload.channel == "sms":
-        if is_sms_configured() and recipients:
-            send_sms(recipients, payload.message)
-            send_status = "sent"
-        else:
+    if payload.channel in ("sms", "voice"):
+        recipients = [s["phone_number"] for s in read_subscribers() if s["location_name"] == report["location_name"]]
+        is_configured = is_sms_configured() if payload.channel == "sms" else is_voice_configured()
+        if not recipients:
+            send_status = "no_recipients"
+        elif not is_configured:
             send_status = "simulated"
-    elif payload.channel == "voice":
-        if is_voice_configured() and recipients:
-            place_call(recipients, payload.message)
-            send_status = "sent"
         else:
-            send_status = "simulated"
+            try:
+                if payload.channel == "sms":
+                    send_sms(recipients, payload.message)
+                else:
+                    place_call(recipients, payload.message)
+                send_status = "sent"
+            except Exception:
+                # e.g. the africastalking SDK rejects a malformed phone
+                # number client-side before ever calling the API — never
+                # let one bad number crash the whole response send.
+                send_status = "failed"
     else:
-        # radio / community_leader: no real dispatch integration exists.
+        # radio / community_leader: no real dispatch integration exists;
+        # payload.recipients here is freeform text, not phone numbers.
+        recipients = payload.recipients or []
         send_status = "simulated"
 
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")

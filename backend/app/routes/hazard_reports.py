@@ -7,6 +7,9 @@ from fastapi import APIRouter, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
+from app.models.sms_gateway import is_configured as is_sms_configured, send_sms
+from app.routes.alerts import _send_channel
+
 router = APIRouter()
 
 HAZARD_REPORTS_FILE = Path(__file__).resolve().parent.parent / "data" / "hazard_reports.json"
@@ -20,6 +23,21 @@ ALLOWED_PHOTO_TYPES = {
 }
 
 
+def _sniff_image_extension(data: bytes) -> str | None:
+    """Identifies a file's real type from its magic bytes, ignoring
+    whatever `Content-Type` the client claimed — that header is
+    caller-controlled and easy to spoof (e.g. upload an HTML/script file
+    labeled `image/jpeg`). Returns `None` if the bytes don't match any of
+    the 3 allowed image signatures, regardless of the claimed type."""
+    if data.startswith(b"\xff\xd8\xff"):
+        return ".jpg"
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return ".png"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return ".webp"
+    return None
+
+
 class HazardReportRequest(BaseModel):
     category: str
     description: str | None = None
@@ -27,6 +45,13 @@ class HazardReportRequest(BaseModel):
     needs_assistance: bool = False
     latitude: float | None = Field(default=None, allow_inf_nan=False)
     longitude: float | None = Field(default=None, allow_inf_nan=False)
+    # Optional, and never echoed back in HazardReportResponse (see below) —
+    # purely so this specific reporter can be reached again: a submission
+    # confirmation now, and a status-update SMS later if an operator
+    # assigns or resolves this report (see app/routes/admin_reports.py).
+    # Without it, a citizen who reports "I'm trapped" has no way to know
+    # anyone ever saw it.
+    phone_number: str | None = None
 
 
 class HazardReportResponse(BaseModel):
@@ -135,6 +160,7 @@ def create_hazard_report(payload: HazardReportRequest) -> HazardReportResponse:
         "needs_assistance": payload.needs_assistance,
         "latitude": payload.latitude,
         "longitude": payload.longitude,
+        "phone_number": payload.phone_number,
         "submitted_at": now,
         "has_photo": False,
         # Incident-management fields — see app/routes/admin_reports.py.
@@ -147,18 +173,55 @@ def create_hazard_report(payload: HazardReportRequest) -> HazardReportResponse:
         "assigned_to": None,
         "assigned_by": None,
         "responses": [],
+        "reporter_notifications": [],
     }
+    if entry["phone_number"]:
+        message = (
+            f"AfriShield: We received your request for help near {entry['location_name']}. "
+            "A responder has been notified and will follow up as soon as possible."
+            if entry["needs_assistance"]
+            else f"AfriShield: We received your hazard report near {entry['location_name']}. "
+            "Thank you for helping keep your community informed."
+        )
+        entry["reporter_notifications"].append(notify_reporter(entry["phone_number"], message))
+
     _append_report(entry)
     return HazardReportResponse(**entry)
+
+
+def notify_reporter(phone_number: str, message: str) -> dict:
+    """Best-effort SMS to the person who filed a report — used for the
+    submission confirmation above, and reused by
+    `app/routes/admin_reports.py` for a status-update SMS when an
+    operator assigns or resolves that report. Returns a log entry
+    (`{message, status, sent_at}`) for the caller to append into that
+    report's `reporter_notifications` — this function does no file I/O
+    itself, so callers who already have the report loaded (and are about
+    to write it back anyway) don't risk a lost update from two separate
+    read-modify-write cycles racing each other.
+
+    Never raises — a failed/unconfigured send just gets logged with a
+    `"failed"`/`"simulated"` status, exactly like every other channel in
+    this project (see `_send_channel` in `app/routes/alerts.py`).
+
+    English only for now — the alert-broadcast messages elsewhere in this
+    project are localized (see `app/models/translations.py`), but that
+    machinery is built around a region's risk level, not a one-off
+    reporter notification. Worth doing the same for these eventually, not
+    done yet."""
+    status = _send_channel(is_sms_configured(), [phone_number], lambda: send_sms([phone_number], message))
+    return {"message": message, "status": status, "sent_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}
 
 
 @router.post("/api/hazard-reports/{report_id}/photo", response_model=HazardReportResponse)
 async def upload_hazard_report_photo(report_id: str, photo: UploadFile = File(...)) -> HazardReportResponse:
     """Attaches a photo to an already-created report — a separate step
     from `POST /api/hazard-reports` because that endpoint is plain JSON,
-    not multipart. 404s if `report_id` doesn't exist; 415 if the content
-    type isn't one of `image/jpeg`, `image/png`, `image/webp`; 413 if the
-    file is over 8MB. Stored as a plain file on local disk
+    not multipart. 404s if `report_id` doesn't exist; 415 if the file's
+    actual bytes aren't one of JPEG, PNG, or WebP (checked by magic-byte
+    signature, not by trusting the client's `Content-Type` header — that
+    header is easy to spoof and previously was the only check); 413 if
+    the file is over 8MB. Stored as a plain file on local disk
     (`app/data/hazard_report_photos/{report_id}.{ext}`) — matching this
     backend's existing "lightweight JSON-file + local storage" approach,
     not object storage. A second upload for the same `report_id`
@@ -168,16 +231,16 @@ async def upload_hazard_report_photo(report_id: str, photo: UploadFile = File(..
     if report is None:
         raise HTTPException(status_code=404, detail=f"Unknown hazard report id: {report_id}")
 
-    extension = ALLOWED_PHOTO_TYPES.get(photo.content_type or "")
-    if extension is None:
-        raise HTTPException(
-            status_code=415,
-            detail=f"Unsupported photo type: {photo.content_type}. Use JPEG, PNG, or WebP.",
-        )
-
     data = await photo.read()
     if len(data) > MAX_PHOTO_BYTES:
         raise HTTPException(status_code=413, detail="Photo is too large (max 8MB).")
+
+    extension = _sniff_image_extension(data)
+    if extension is None:
+        raise HTTPException(
+            status_code=415,
+            detail="File doesn't look like a JPEG, PNG, or WebP image (checked by content, not just its declared type).",
+        )
 
     HAZARD_REPORT_PHOTOS_DIR.mkdir(parents=True, exist_ok=True)
     for existing in HAZARD_REPORT_PHOTOS_DIR.glob(f"{report_id}.*"):

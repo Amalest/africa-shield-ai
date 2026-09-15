@@ -38,6 +38,9 @@
   "lgaFieldHint": "Weka serikali yako ya mtaa",
   "cityFieldLabel": "Mji / Jamii",
   "cityFieldHint": "Weka mji / jamii yako",
+  "phoneFieldLabel": "Nambari ya Simu",
+  "phoneFieldHint": "mfano +234 800 000 0000",
+  "phoneFieldNote": "Si lazima — inahitajika tu kwa arifa za SMS, simu ya sauti, au USSD. Arifa za push hazihitaji.",
   "orDivider": "AU",
   "useMyCurrentLocation": "Tumia mahali nilipo sasa",
   "gpsCapturedNote": "GPS imepatikana: {lat}, {lon}. Bado hakuna utafutaji wa anwani, tafadhali endelea kujaza jimbo/LGA/mji hapa chini.",
@@ -172,6 +175,22 @@
   "smsChannelTitle": "SMS",
   "smsChannelSubtitle": "Pokea maonyo kwa SMS hata bila intaneti.",
   "smsRealNote": "Halisi — inatumwa kupitia Africa's Talking.",
+  "smsNoPhoneYet": "Ongeza nambari ya simu kwanza kwenye Mipangilio > Mahali — SMS inahitaji nambari ya kutuma.",
+  "smsNoRegionYet": "Bado hakuna eneo linalofuatiliwa kwa ajili yako, kwa hivyo SMS haiwezi kusanidiwa.",
+  "smsRegistrationFailed": "Imeshindwa kusajili nambari yako kwa arifa za SMS — angalia muunganisho wako na ujaribu tena.",
+  "smsEnabled": "Arifa za SMS zimewashwa kwa nambari hii.",
+  "smsDisabled": "Arifa za SMS zimezimwa.",
+  "smsCodeRequestFailed": "Imeshindwa kuomba msimbo wa uthibitisho — angalia muunganisho wako na ujaribu tena.",
+  "smsCodeDialogTitle": "Weka msimbo wa uthibitisho",
+  "smsCodeDialogBody": "Tumetuma msimbo wa tarakimu 6 kwa {phone}. Uweke hapa chini ili kuendelea.",
+  "@smsCodeDialogBody": {
+    "placeholders": {
+      "phone": { "type": "String" }
+    }
+  },
+  "smsCodeSimulatedNote": "SMS haijasanidiwa kwenye seva — msimbo huu unaonyeshwa hapa kwa madhumuni ya majaribio pekee.",
+  "smsCodeHint": "Msimbo wa tarakimu 6",
+  "smsCodeSubmitButton": "Thibitisha",
   "ussdChannelTitle": "USSD",
   "ussdChannelSubtitle": "Pokea maonyo kwenye simu za kawaida.",
   "ussdNote": "Imejengwa, lakini bado haijathibitishwa na mtandao halisi.",

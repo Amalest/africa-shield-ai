@@ -5,6 +5,7 @@ __pycache__/
 .venv/
 venv/
 *.log
+.pytest_cache/
 
 # Node
 node_modules/
@@ -24,6 +25,16 @@ backend/app/data/region_alert_state.json
 backend/app/data/hazard_reports.json
 backend/app/data/hazard_report_photos/
 backend/app/data/admins.json
+backend/app/data/revoked_jtis.json
+backend/app/data/pending_subscriber_verifications.json
+backend/app/data/pending_alerts.json
+backend/app/data/sensor_readings.json
+
+# Downloaded satellite data cache -- large binaries, re-fetchable
+backend/app/data/swot_cache/
+
+# Compiled sketch binaries -- rebuild locally, don't commit
+hardware/*/build/
 
 # Editor/OS
 .vscode/

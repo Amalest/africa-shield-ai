@@ -1,16 +1,41 @@
 import json
+import secrets
 from pathlib import Path
 
-from fastapi import APIRouter, Form
+from fastapi import APIRouter, Depends, Form, HTTPException
 from fastapi.responses import PlainTextResponse
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
 
+from app.config import USSD_WEBHOOK_PASSWORD, USSD_WEBHOOK_USERNAME
 from app.models.risk_model import risk_score_breakdown
 from app.models.translations import build_alert_messages
+from app.routes.subscribers import read_subscribers as _read_subscribers
+from app.routes.subscribers import write_subscribers as _write_subscribers
 
 router = APIRouter()
 
 REGIONS_FILE = Path(__file__).resolve().parent.parent / "data" / "regions.json"
-SUBSCRIBERS_FILE = Path(__file__).resolve().parent.parent / "data" / "subscribers.json"
+
+_basic_auth = HTTPBasic(auto_error=False)
+
+
+def _verify_webhook_caller(credentials: HTTPBasicCredentials | None = Depends(_basic_auth)) -> None:
+    """Optional HTTP Basic Auth on this webhook — Africa's Talking lets
+    you embed `user:pass@` directly in the callback URL you configure in
+    their dashboard, so this needs no special client support, just a URL
+    change. Without `USSD_WEBHOOK_USERNAME`/`PASSWORD` set, this is a
+    no-op — matches this repo's documented local-testing workflow of
+    posting raw form-encoded requests directly with curl. Set both before
+    pointing a real USSD channel at a publicly reachable URL, or anyone
+    on the internet can call this endpoint pretending to be any phone
+    number, including to add/remove real subscribers via the menu below."""
+    if not (USSD_WEBHOOK_USERNAME and USSD_WEBHOOK_PASSWORD):
+        return
+    valid = credentials is not None and secrets.compare_digest(
+        credentials.username, USSD_WEBHOOK_USERNAME
+    ) and secrets.compare_digest(credentials.password, USSD_WEBHOOK_PASSWORD)
+    if not valid:
+        raise HTTPException(status_code=401, detail="Invalid USSD webhook credentials", headers={"WWW-Authenticate": "Basic"})
 
 
 def _regions() -> list[dict]:
@@ -19,16 +44,6 @@ def _regions() -> list[dict]:
 
 def _short_name(location_name: str) -> str:
     return location_name.split(",")[0]
-
-
-def _read_subscribers() -> list[dict]:
-    if not SUBSCRIBERS_FILE.exists():
-        return []
-    return json.loads(SUBSCRIBERS_FILE.read_text(encoding="utf-8"))
-
-
-def _write_subscribers(subscribers: list[dict]) -> None:
-    SUBSCRIBERS_FILE.write_text(json.dumps(subscribers, indent=2), encoding="utf-8")
 
 
 def _region_menu(regions: list[dict]) -> str:
@@ -45,7 +60,7 @@ def _pick_region(regions: list[dict], choice: str) -> dict | None:
     return None
 
 
-@router.post("/api/ussd")
+@router.post("/api/ussd", dependencies=[Depends(_verify_webhook_caller)])
 def ussd_callback(
     sessionId: str = Form(...),
     serviceCode: str = Form(...),

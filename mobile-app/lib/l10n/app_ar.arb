@@ -38,6 +38,9 @@
   "lgaFieldHint": "أدخل حكومتك المحلية",
   "cityFieldLabel": "المدينة / المجتمع",
   "cityFieldHint": "أدخل مدينتك / مجتمعك",
+  "phoneFieldLabel": "رقم الهاتف",
+  "phoneFieldHint": "مثال: ‎+234 800 000 0000",
+  "phoneFieldNote": "اختياري — مطلوب فقط لتنبيهات الرسائل النصية أو المكالمات الصوتية أو USSD. إشعارات الدفع لا تحتاج إليه.",
   "orDivider": "أو",
   "useMyCurrentLocation": "استخدم موقعي الحالي",
   "gpsCapturedNote": "تم تحديد الموقع عبر GPS: {lat}, {lon}. لا يوجد بعد بحث تلقائي عن العنوان، لذا يرجى إكمال الولاية/الحكومة المحلية/المدينة أدناه.",
@@ -172,6 +175,22 @@
   "smsChannelTitle": "رسائل نصية (SMS)",
   "smsChannelSubtitle": "تلقَّ التنبيهات عبر الرسائل النصية حتى بدون إنترنت.",
   "smsRealNote": "حقيقي — يُرسل عبر Africa's Talking.",
+  "smsNoPhoneYet": "أضف رقم هاتف أولاً من الإعدادات > الموقع — الرسائل النصية تحتاج رقمًا لترسل إليه.",
+  "smsNoRegionYet": "لا توجد منطقة مراقبة لك بعد، لذا لا يمكن إعداد الرسائل النصية.",
+  "smsRegistrationFailed": "تعذر تسجيل رقمك لتنبيهات الرسائل النصية — تحقق من اتصالك وحاول مرة أخرى.",
+  "smsEnabled": "تم تفعيل تنبيهات الرسائل النصية لهذا الرقم.",
+  "smsDisabled": "تم إيقاف تنبيهات الرسائل النصية.",
+  "smsCodeRequestFailed": "تعذر طلب رمز التحقق — تحقق من اتصالك وحاول مرة أخرى.",
+  "smsCodeDialogTitle": "أدخل رمز التحقق",
+  "smsCodeDialogBody": "أرسلنا رمزًا مكونًا من 6 أرقام إلى {phone}. أدخله أدناه للمتابعة.",
+  "@smsCodeDialogBody": {
+    "placeholders": {
+      "phone": { "type": "String" }
+    }
+  },
+  "smsCodeSimulatedNote": "الرسائل النصية غير مُهيأة على الخادم — يُعرض هذا الرمز هنا لأغراض الاختبار فقط.",
+  "smsCodeHint": "رمز مكون من 6 أرقام",
+  "smsCodeSubmitButton": "تحقق",
   "ussdChannelTitle": "USSD",
   "ussdChannelSubtitle": "تلقَّ التنبيهات على الهواتف الأساسية.",
   "ussdNote": "تم تنفيذه، لكن لم يتم التحقق منه بعد مع شركة اتصالات حقيقية.",
